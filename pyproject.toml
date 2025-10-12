@@ -12,7 +12,8 @@ dependencies = [
     "numpy (>=2.3.3,<3.0.0)",
     "requests (>=2.32.5,<3.0.0)",
     "openpyxl (>=3.1.5,<4.0.0)",
-    "pandas (>=2.3.3,<3.0.0)"
+    "pandas (>=2.3.3,<3.0.0)",
+    "bioservices (>=1.12.1,<2.0.0) ; python_version >= \"3.13\" and python_version < \"4.0\""
 ]
 
 
