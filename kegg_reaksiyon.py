@@ -1,122 +1,140 @@
-import pandas as pd
 from bioservices import KEGG
-import sys
-
+import pandas as pd
+import time
+import re
 
 def get_reaction_data_from_kegg(pathway_name):
-    """
-    KEGG veritabanından belirtilen yolağa ait reaksiyon bilgilerini çeker.
-    """
     k = KEGG()
-
-    # Zaman aşımı süresini doğrudan ayarla (bazı sürümlerde k.settings yok)
-    if hasattr(k, "settings") and k.settings is not None:
-        k.settings.TIMEOUT = 60
-    else:
-        k.TIMEOUT = 60
+    k.TIMEOUT = 60
+    
+    # Bileşik ID'lerini isimleriyle eşleştirmek için bir önbellek (cache) oluşturalım.
+    # Bu, aynı bileşiği tekrar tekrar sormamızı engelleyerek hızı artırır.
+    compound_name_cache = {}
 
     print(f"KEGG veritabanında '{pathway_name}' için arama yapılıyor...")
 
-    # E. coli (eco) için yolağı bul
+    path_id = None
     try:
-        pathway_list_str = k.find("pathway", pathway_name)
-        if not pathway_list_str:
-            print("KEGG yanıt vermedi veya arama sonucu boş döndü.")
+        # E. coli için tüm yolakları listele ve içinde ara (en sağlam yöntem)
+        all_paths_str = k.list("pathway", "eco")
+        if not isinstance(all_paths_str, str):
+             print(f"⚠️ KEGG'den yolak listesi alınamadı (API hatası).")
+             return None
+
+        matches = [p for p in all_paths_str.split("\n") if pathway_name.lower() in p.lower()]
+        
+        if matches:
+            first_match = matches[0]
+            print(f"🔎 Eşleşme bulundu: {first_match}")
+            path_id = first_match.split("\t")[0].split(":")[-1]
+        else:
+            print(f"E. coli ('eco') içinde '{pathway_name}' ile eşleşen bir yolak bulunamadı.")
+            return None
+            
+    except Exception as e:
+        print(f"⚠️ Yolak listesi alınamadı: {e}")
+        return None
+
+    print(f"KEGG yolağı bulundu: {path_id}")
+
+    # Reaksiyonları 'link' fonksiyonu ile çekmek en güvenilir yoldur.
+    map_id = "map" + path_id[3:]
+    print(f"'{map_id}' haritasıyla ilişkili reaksiyonlar aranıyor...")
+
+    unique_reaction_ids = []
+    try:
+        reaction_links = k.link("reaction", map_id)
+        if isinstance(reaction_links, str) and reaction_links.strip():
+            for line in reaction_links.strip().split('\n'):
+                parts = line.split('\t')
+                if len(parts) == 2:
+                    reaction_part = parts[1].split(':')[1]
+                    unique_reaction_ids.append(reaction_part)
+        else:
+            print(f"'{map_id}' haritası için bağlantılı reaksiyon bulunamadı.")
             return None
     except Exception as e:
-        print(f"KEGG API'sine bağlanırken bir hata oluştu: {e}")
+        print(f"⚠️ Reaksiyon bağlantıları alınırken hata oluştu: {e}")
         return None
 
-    eco_pathways = [line for line in pathway_list_str.strip().split("\n") if "eco" in line]
-
-    if not eco_pathways:
-        print(f"KEGG'de E. coli için '{pathway_name}' ile eşleşen bir yolağı bulunamadı.")
+    if not unique_reaction_ids:
+        print(f"'{map_id}' haritası içinde reaksiyon ID'si bulunamadı.")
         return None
 
-    # Genellikle ilk sonuç en alakalı olandır
-    pathway_id = eco_pathways[0].split("\t")[0]
-    pathway_full_name = eco_pathways[0].split("\t")[1]
-    print(f"KEGG yolağı bulundu: {pathway_full_name} ({pathway_id})")
+    print(f"Toplam {len(unique_reaction_ids)} benzersiz reaksiyon bulundu. Detaylar çekiliyor...")
+    print("UYARI: Okunabilir stokiyometri oluşturmak için ek API sorguları yapılacak, bu işlem yavaş olabilir.")
 
-    # Reaksiyonları al
-    try:
-        reaction_links = k.link("reaction", pathway_id)
-        if not reaction_links:
-            print("Bu yolağa bağlı reaksiyon bulunamadı.")
-            return None
-        reaction_ids = [line.split("\t")[1].replace("rn:", "") for line in reaction_links.strip().split("\n")]
-    except Exception as e:
-        print(f"Reaksiyonlar alınamadı: {e}")
-        return None
-
-    print(f"Toplam {len(reaction_ids)} reaksiyon bulundu. Detaylar çekiliyor...")
-
-    all_reactions_data = []
-    for i, rxn_id in enumerate(reaction_ids):
-        sys.stdout.write(f"\rİşleniyor: {i+1}/{len(reaction_ids)} ({rxn_id})")
-        sys.stdout.flush()
-
+    reaction_data = []
+    for i, rxn_id in enumerate(unique_reaction_ids, 1):
+        print(f"İşleniyor: {i}/{len(unique_reaction_ids)} ({rxn_id})")
         try:
             rxn_data_str = k.get(rxn_id)
-            if not rxn_data_str:
-                print(f"\n{rxn_id} için veri alınamadı. Atlanıyor.")
-                continue
+            if not rxn_data_str: continue
+
+            # Değişkenleri başlangıçta tanımla
+            rxn_name, equation_ids, ec_numbers, reversibility = "", "", "", "N/A"
+            readable_stoichiometry = ""
+
+            for line in rxn_data_str.split("\n"):
+                if line.startswith("NAME"):
+                    rxn_name = line.replace("NAME", "").strip()
+                elif line.startswith("ENZYME"):
+                    # Sadece EC numaralarını bul (örn: 1.2.3.4 veya 1.2.3.-)
+                    found_ecs = re.findall(r"\d+\.\d+\.\d+\.(?:\d+|\-)", line)
+                    ec_numbers = " ".join(found_ecs)
+                elif line.startswith("EQUATION"):
+                    equation_ids = line.replace("EQUATION", "").strip()
+                    reversibility = "Reversible" if "<=>" in equation_ids else "Irreversible"
+                    
+                    # Okunabilir stokiyometri oluşturma
+                    readable_stoichiometry = equation_ids
+                    compound_ids = set(re.findall(r"C\d{5}", equation_ids))
+                    
+                    for cpd_id in compound_ids:
+                        if cpd_id in compound_name_cache:
+                            cpd_name = compound_name_cache[cpd_id]
+                        else:
+                            # Önbellekte yoksa KEGG'den çek
+                            cpd_data = k.get(cpd_id)
+                            cpd_name = "Unknown"
+                            for cpd_line in cpd_data.split('\n'):
+                                if cpd_line.startswith("NAME"):
+                                    cpd_name = cpd_line.replace("NAME", "").strip().split(';')[0]
+                                    break
+                            compound_name_cache[cpd_id] = cpd_name
+                            time.sleep(0.05) # API'yi yormamak için küçük bekleme
+                        
+                        # ID'yi isimle değiştir (regex ile tam eşleşme sağlanır)
+                        readable_stoichiometry = re.sub(r'\b' + cpd_id + r'\b', cpd_name, readable_stoichiometry)
+
+            reaction_data.append({
+                "RxnID": rxn_id,
+                "Reaction name": rxn_name,
+                "EC Number": ec_numbers,
+                "Stoichiometry (IDs)": equation_ids,
+                "Readable Stoichiometry": readable_stoichiometry,
+                "Reversibility": reversibility,
+                "Evidence/Source": "KEGG"
+            })
+            time.sleep(0.1)
+
         except Exception as e:
-            print(f"\n{rxn_id} için veri çekilemedi: {e}")
+            print(f"Hata: {rxn_id} - {e}")
             continue
 
-        reaction_name = ""
-        ec_number = ""
-        stoichiometry = ""
-        reversibility = ""
-        gpr = ""
+    print("Veri çekme işlemi tamamlandı.\n")
 
-        for line in rxn_data_str.strip().split("\n"):
-            if line.startswith("NAME"):
-                reaction_name = line.replace("NAME", "").strip()
-            elif line.startswith("EQUATION"):
-                stoichiometry = line.replace("EQUATION", "").strip()
-                reversibility = "Reversible" if "<=>" in stoichiometry else "Irreversible"
-            elif line.startswith("ENZYME"):
-                ec_number = line.replace("ENZYME", "").strip()
-
-        # GPR (Gen-Protein ilişkilendirmesi)
-        try:
-            gene_links = k.link("genes", f"rn:{rxn_id}")
-            if gene_links:
-                eco_genes = [line.split("\t")[1] for line in gene_links.strip().split("\n") if line.startswith("eco:")]
-                gpr = " or ".join(sorted(list(set(eco_genes)))) if eco_genes else "N/A"
-            else:
-                gpr = "N/A"
-        except Exception:
-            gpr = "N/A"
-
-        all_reactions_data.append({
-            "RxnID": rxn_id,
-            "Reaction name": reaction_name,
-            "EC Number": ec_number,
-            "Stoichiometry": stoichiometry,
-            "Compartment": "N/A",
-            "Reversibility": reversibility,
-            "GPR": gpr,
-            "Evidence/Source": "KEGG"
-        })
-
-    print("\nVeri çekme işlemi tamamlandı.")
-    return pd.DataFrame(all_reactions_data)
-
-
-if __name__ == "__main__":
-    pathway_input = input("Lütfen E. coli'de aramak istediğiniz yolağın adını girin (örneğin, serine biosynthesis): ")
-
-    final_df = get_reaction_data_from_kegg(pathway_input)
-
-    if final_df is not None and not final_df.empty:
-        output_file = f"{pathway_input.replace(' ', '_')}_reaction_data_KEGG.xlsx"
-        try:
-            final_df.to_excel(output_file, index=False)
-            print(f"\nVeriler başarıyla '{output_file}' dosyasına kaydedildi.")
-        except Exception as e:
-            print(f"\nExcel dosyası kaydedilirken bir hata oluştu: {e}")
+    df = pd.DataFrame(reaction_data)
+    if not df.empty:
+        output_file = f"kegg_reactions_{pathway_name.replace(' ', '_')}.xlsx"
+        df.to_excel(output_file, index=False)
+        print(f"💾 Sonuçlar kaydedildi: {output_file}")
     else:
-        print("\nKEGG veritabanından herhangi bir veri alınamadı.")
+        print("⚠️ Veri toplanamadığı için Excel dosyası oluşturulmadı.")
+    return df
+
+# Ana akış
+if __name__ == "__main__":
+    pathway_input = input("Lütfen E. coli'de aramak istediğiniz yolağın adını girin (örneğin, glycolysis): ").strip()
+    if pathway_input:
+        final_df = get_reaction_data_from_kegg(pathway_input)
