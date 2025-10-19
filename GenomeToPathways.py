@@ -144,6 +144,8 @@ def uniprot_search(ann_path:str, prkName="prokkaAnnotes"):
     """
 
     gbf_file = os.path.join(ann_path, f"{prkName}.gbf")
+    if not os.path.exists(gbf_file):
+        gbf_file = os.path.join(ann_path, f"{prkName}.gbk")
 
     total_CDS = sum(1 for record in SeqIO.parse(gbf_file, "genbank") for f in record.features if f.type == "CDS")
 
@@ -173,7 +175,7 @@ def uniprot_search(ann_path:str, prkName="prokkaAnnotes"):
                     "EC_number": ec_number
                 })
             
-            sys.stdout.write(f"Parsing {len(cds_values)} valid UniProt ids out of {total_CDS}")
+    sys.stdout.write(f"Parsing {len(cds_values)} valid UniProt ids out of {total_CDS}")
 
     print(f"Total with UniProt IDs: {len(cds_values)}")
     # !TODO: Make another function to check the empty slots for each value and then hit UniProt to fill them
