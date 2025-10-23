@@ -132,36 +132,61 @@ def map_uniprot_to_kegg_via_rest(uniprot_ids, chunk_size=500, max_retries=3):
     return mapping_dict
 
 def parse_kegg_entry(entry_text):
-    """Parses the text from a KEGG 'get' command to find pathways and the KO number."""
+    """
+    Parses the text from a KEGG 'get' command to find pathways,
+    the KO number, and the BRITE hierarchy.
+    """
     pathways = []
+    brite_hierarchy = []
     ko_number = None
+    
     lines = entry_text.strip().split('\n')
     
-    in_pathway_section = False
-    in_orthology_section = False
-
+    current_section = None
+    
     for line in lines:
-        if line.startswith("PATHWAY"):
-            in_pathway_section = True
-            pathway_name = line[12:].strip().split('  ')[-1]
-            pathways.append(pathway_name)
-        elif in_pathway_section and line.startswith(" "):
-            pathway_name = line[12:].strip().split('  ')[-1]
-            pathways.append(pathway_name)
-        else:
-            in_pathway_section = False
+        # Check for a new section start
+        if not line.startswith(" "):
+            # Find the section keyword (first word)
+            # Use split(None, 1) to split only on the first block of whitespace
+            parts = line.split(None, 1)
+            if parts:
+                keyword = parts[0]
+                # Check against a list of known KEGG keywords
+                if keyword in ["ENTRY", "NAME", "SYMBOL", "ORTHOLOGY", "ORGANISM", 
+                               "PATHWAY", "MODULE", "BRITE", "POSITION", "MOTIF", 
+                               "DBLINKS", "STRUCTURE", "AASEQ", "NTSEQ"]:
+                    current_section = keyword
+                else:
+                    # If it's not a recognized keyword, it's not a new section
+                    current_section = None 
+        
+        # Process based on the current section
+        # The content of each section starts at column 13 (index 12)
+        content = line[12:].strip()
+        
+        if current_section == "PATHWAY":
+            if content:
+                # content is e.g., "ecj00260  Glycine, serine and threonine metabolism"
+                pathways.append(content)
+        
+        elif current_section == "ORTHOLOGY":
+            if "[KO:" in content:
+                try:
+                    # Extract the KO number
+                    ko_num = content.split("[KO:")[-1].split("]")[0].strip()
+                    if ko_num: # Only assign if we found one
+                        ko_number = ko_num
+                except Exception:
+                    pass # Ignore parsing errors, keep ko_number as None or as last found
+        
+        elif current_section == "BRITE":
+            if content:
+                # content is e.g., "KEGG Orthology (KO) [BR:ecj00001]"
+                # or "09100 Metabolism"
+                brite_hierarchy.append(content)
 
-        if line.startswith("ORTHOLOGY"):
-            in_orthology_section = True
-            if "[KO:" in line:
-                ko_number = line.split("[KO:")[-1].split("]")[0].strip()
-        elif in_orthology_section and line.startswith(" "):
-             if "[KO:" in line:
-                ko_number = line.split("[KO:")[-1].split("]")[0].strip()
-        else:
-            in_orthology_section = False
-
-    return pathways, ko_number
+    return pathways, ko_number, brite_hierarchy
 
 def parse_ko_entry(entry_text):
     """Parses the text from a KEGG KO entry to find reactions."""
@@ -174,11 +199,12 @@ def parse_ko_entry(entry_text):
             # Extract reactions from the first line
             reaction_part = line[12:].strip()
             reactions.extend([r.strip() for r in reaction_part.split(',')])
-        elif in_reaction_section and line.startswith("        "): # Continuation line
+        elif in_reaction_section and line.startswith("            "): # Continuation line (12 spaces)
              # Extract reactions from continuation lines
             reaction_part = line[12:].strip()
             reactions.extend([r.strip() for r in reaction_part.split(',')])
-        else:
+        elif in_reaction_section and not line.startswith("            "):
+            # No longer in the reaction section if indentation stops
             in_reaction_section = False
     # Filter out empty strings that might result from splitting
     return [r for r in reactions if r]
@@ -416,9 +442,10 @@ def kegg_search(cds_values, ann_path, gene_cache_file="kegg_gene_cache.json", ko
             ko_cache = json.load(f)
     
     uniprot_ids = [entry["inference"] for entry in cds_values]
+    unique_uniprot_ids = list(set(uniprot_ids))
 
-    print(f"Doing UniProt to KEGG transform for {len(uniprot_ids)}")
-    uniprot_to_kegg = map_uniprot_to_kegg_via_rest(uniprot_ids)
+    print(f"Doing UniProt to KEGG transform for {len(unique_uniprot_ids)} unique IDs")
+    uniprot_to_kegg = map_uniprot_to_kegg_via_rest(unique_uniprot_ids)
     print(f"\nSuccessfully mapped {len(uniprot_to_kegg)} UniProt IDs.")
 
     total_entries = len(cds_values)
@@ -430,6 +457,7 @@ def kegg_search(cds_values, ann_path, gene_cache_file="kegg_gene_cache.json", ko
         entry["kegg_id"] = kegg_id if kegg_id else "N/A"
         entry["pathways"] = []
         entry["reactions"] = []
+        entry["brite_hierarchy"] = [] # <-- ADDED THIS
 
         if not kegg_id:
             continue
@@ -442,8 +470,11 @@ def kegg_search(cds_values, ann_path, gene_cache_file="kegg_gene_cache.json", ko
                 gene_cache[kegg_id] = response.text
             
             gene_entry_text = gene_cache[kegg_id]
-            pathways, ko_number = parse_kegg_entry(gene_entry_text)
+            # <-- MODIFIED CALL TO NEW PARSER -->
+            pathways, ko_number, brite_data = parse_kegg_entry(gene_entry_text)
+            
             entry["pathways"] = pathways if pathways else ["N/A"]
+            entry["brite_hierarchy"] = brite_data if brite_data else ["N/A"] # <-- ADDED THIS
 
             if ko_number:
                 if ko_number not in ko_cache:
@@ -462,18 +493,25 @@ def kegg_search(cds_values, ann_path, gene_cache_file="kegg_gene_cache.json", ko
             print(f"\nError fetching data for {kegg_id} (from UniProt {uniprot_id}): {e}")
             entry["pathways"] = [f"Error: {e}"]
             entry["reactions"] = [f"Error: {e}"]
+            entry["brite_hierarchy"] = [f"Error: {e}"] # <-- ADDED THIS
         
         sys.stdout.write(f"\rProcessing {i}/{total_entries} entries...")
         sys.stdout.flush()
     
     print("\n\nFinished KEGG search.")
-    with open(gene_cache_path, 'w') as f:
-        json.dump(gene_cache, f, indent=2)
-    print(f"Saved KEGG Gene data to cache: '{gene_cache_path}'")
+    try:
+        with open(gene_cache_path, 'w') as f:
+            json.dump(gene_cache, f, indent=2)
+        print(f"Saved KEGG Gene data to cache: '{gene_cache_path}'")
+    except Exception as e:
+        print(f"Error saving gene cache: {e}")
 
-    with open(ko_cache_path, 'w') as f:
-        json.dump(ko_cache, f, indent=2)
-    print(f"Saved KEGG KO data to cache: '{ko_cache_path}'")
+    try:
+        with open(ko_cache_path, 'w') as f:
+            json.dump(ko_cache, f, indent=2)
+        print(f"Saved KEGG KO data to cache: '{ko_cache_path}'")
+    except Exception as e:
+        print(f"Error saving KO cache: {e}")
 
     return cds_values
 
@@ -499,7 +537,8 @@ def excel_creation(enriched_cds_values, output_file="annotation_results.xlsx"):
     for entry in enriched_cds_values:
         # Convert list values to comma-separated strings for cleaner Excel output
         row = [
-            ", ".join(map(str, entry.get(h, []))) if isinstance(entry.get(h), list) else entry.get(h, "")
+            # Use newline (\n) as a separator for lists, which Excel can handle
+            "\n".join(map(str, entry.get(h, []))) if isinstance(entry.get(h), list) else entry.get(h, "")
             for h in headers
         ]
         ws.append(row)
