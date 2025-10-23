@@ -1,4 +1,4 @@
-import subprocess, os, sys
+import subprocess, os, sys, json, requests, time
 
 from Bio import SeqIO
 from openpyxl import Workbook
@@ -24,6 +24,165 @@ def run_cmd(cmd:str, cmd_name="No Name"):
         print(f"Stdout: \n {e.stdout} \n")
         print(f"Stderr: \n {e.stderr} \n")
 
+def check_existing_file(file_path: str, step_name: str) -> bool:
+    """
+    Checks if a file already exists and asks the user if it should be reused.
+    Returns True if the step should be skipped.
+    """
+    if os.path.exists(file_path):
+        resp = input(f"Found existing {step_name} at {file_path}. Skip this step and reuse it? [Y/n]: ")
+        if resp.strip().lower() in ["", "y", "yes"]:
+            print(f"Skipping {step_name}, using existing file.\n")
+            return True
+    return False
+
+def map_uniprot_to_kegg_via_rest(uniprot_ids, chunk_size=500, max_retries=3):
+    """
+    Maps UniProt IDs to KEGG IDs using the UniProt REST API directly.
+    Includes a retry mechanism and correctly handles paginated results.
+    """
+    mapping_dict = {}
+    
+    for i in range(0, len(uniprot_ids), chunk_size):
+        chunk = uniprot_ids[i:i+chunk_size]
+        if not chunk:
+            continue
+
+        print(f"\nSubmitting chunk {i//chunk_size + 1}/{(len(uniprot_ids) - 1)//chunk_size + 1} for mapping...")
+        
+        for attempt in range(max_retries):
+            job_id = None
+            try:
+                payload = {
+                    "from": "UniProtKB_AC-ID",
+                    "to": "KEGG",
+                    "ids": ",".join(chunk),
+                }
+                
+                submit_response = requests.post("https://rest.uniprot.org/idmapping/run", data=payload)
+                submit_response.raise_for_status()
+                job_id = submit_response.json()["jobId"]
+                
+                # --- Polling Loop ---
+                spinner_idx = 0
+                job_finished = False
+                while not job_finished:
+                    status_url = f"https://rest.uniprot.org/idmapping/status/{job_id}"
+                    status_response = requests.get(status_url)
+
+                    if status_response.status_code == 404:
+                        sys.stdout.write(f"\rPolling job status... (job not ready, waiting) {'/-\\|'[spinner_idx % 4]}")
+                        sys.stdout.flush()
+                        spinner_idx += 1
+                        time.sleep(5)
+                        continue
+
+                    status_response.raise_for_status()
+                    status_data = status_response.json()
+
+                    # Check for completion signals
+                    if "results" in status_data or status_data.get("jobStatus") == "FINISHED":
+                        job_finished = True
+                    elif status_data.get("jobStatus") in ["RUNNING", "QUEUED"]:
+                        sys.stdout.write(f"\rPolling job status... {'/-\\|'[spinner_idx % 4]}")
+                        sys.stdout.flush()
+                        spinner_idx += 1
+                        time.sleep(2)
+                    else:
+                        print(f"\nJob has an unexpected status. Full response below:")
+                        print(json.dumps(status_data, indent=2))
+                        raise requests.exceptions.RequestException("Unexpected job status")
+                
+                # --- Result Fetching with Pagination ---
+                if job_finished:
+                    sys.stdout.write("\rPolling job status... Done. Fetching all results.\n")
+                    results_url = f"https://rest.uniprot.org/idmapping/results/{job_id}"
+                    
+                    page_count = 1
+                    while results_url:
+                        results_response = requests.get(results_url)
+                        results_response.raise_for_status()
+
+                        for item in results_response.json().get("results", []):
+                            uniprot_id = item['from']
+                            if uniprot_id not in mapping_dict:
+                                mapping_dict[uniprot_id] = item['to']
+                        
+                        # Check for the 'next' page link in the response headers
+                        if 'next' in results_response.links:
+                            results_url = results_response.links['next']['url']
+                            sys.stdout.write(f"\rFetching page {page_count+1}...")
+                            sys.stdout.flush()
+                            page_count += 1
+                        else:
+                            results_url = None # No more pages
+
+                # If we successfully processed the job, exit the retry loop
+                break 
+
+            except requests.exceptions.RequestException as e:
+                print(f"\nAttempt {attempt + 1}/{max_retries} failed for chunk starting at index {i}: {e}")
+                if attempt + 1 == max_retries:
+                    print(f"--- Giving up on this chunk after {max_retries} attempts. ---")
+                else:
+                    delay = 2 ** attempt
+                    print(f"--- Retrying in {delay} seconds... ---")
+                    time.sleep(delay)
+
+    return mapping_dict
+
+def parse_kegg_entry(entry_text):
+    """Parses the text from a KEGG 'get' command to find pathways and the KO number."""
+    pathways = []
+    ko_number = None
+    lines = entry_text.strip().split('\n')
+    
+    in_pathway_section = False
+    in_orthology_section = False
+
+    for line in lines:
+        if line.startswith("PATHWAY"):
+            in_pathway_section = True
+            pathway_name = line[12:].strip().split('  ')[-1]
+            pathways.append(pathway_name)
+        elif in_pathway_section and line.startswith(" "):
+            pathway_name = line[12:].strip().split('  ')[-1]
+            pathways.append(pathway_name)
+        else:
+            in_pathway_section = False
+
+        if line.startswith("ORTHOLOGY"):
+            in_orthology_section = True
+            if "[KO:" in line:
+                ko_number = line.split("[KO:")[-1].split("]")[0].strip()
+        elif in_orthology_section and line.startswith(" "):
+             if "[KO:" in line:
+                ko_number = line.split("[KO:")[-1].split("]")[0].strip()
+        else:
+            in_orthology_section = False
+
+    return pathways, ko_number
+
+def parse_ko_entry(entry_text):
+    """Parses the text from a KEGG KO entry to find reactions."""
+    reactions = []
+    lines = entry_text.strip().split('\n')
+    in_reaction_section = False
+    for line in lines:
+        if line.startswith("REACTION"):
+            in_reaction_section = True
+            # Extract reactions from the first line
+            reaction_part = line[12:].strip()
+            reactions.extend([r.strip() for r in reaction_part.split(',')])
+        elif in_reaction_section and line.startswith("        "): # Continuation line
+             # Extract reactions from continuation lines
+            reaction_part = line[12:].strip()
+            reactions.extend([r.strip() for r in reaction_part.split(',')])
+        else:
+            in_reaction_section = False
+    # Filter out empty strings that might result from splitting
+    return [r for r in reactions if r]
+
 # --- Main Codes for Alignment--->Annotation--->Protein search in UniProt ---> KEGG pathway search
 # !TODO: Add quality control steps beofre alignment
 
@@ -41,10 +200,13 @@ def run_alignement(ref_path:str, fastq1_loc:str, fastq2_loc:str, out_loc:str, th
     base_name = os.path.splitext(os.path.basename(ref_path))[0]
     sam_file = os.path.join(out_loc, f"{base_name}.sam")
 
-    run_cmd(f"bowtie2-build --threads {str(threads)} {ref_path} {base_name}","Indexing Reference File") 
-    # Just as a nitpick, this creates the indexes in the current diretory. I don't like the cluster it creates, possibly modify the {base_name} to group with others
+    ref_index_dir = os.path.join(out_loc, "ref_index")
+    os.makedirs(ref_index_dir, exist_ok=True)
+    ref_index_prefix = os.path.join(ref_index_dir, base_name)
 
-    run_cmd(f"bowtie2 -x {base_name} -1 {fastq1_loc} -2 {fastq2_loc} -S {sam_file}","Aligning FastQ reads")
+    run_cmd(f"bowtie2-build --threads {str(threads)} {ref_path} {ref_index_prefix}","Indexing Reference File") 
+
+    run_cmd(f"bowtie2 -x {ref_index_prefix} -1 {fastq1_loc} -2 {fastq2_loc} -S {sam_file}","Aligning FastQ reads")
 
     return sam_file # This is the full path used for run_samtools()'s sam_path
 
@@ -115,9 +277,6 @@ def run_reference_assembly(ref_path:str, gz_loc:str, out_loc:str):
 
     return cons_loc # Used in prokka to annote
 
-prokka_bin = os.environ.get("PROKKA_BIN", "prokka")
-prokka_db = os.environ.get("PROKKA_DB", "./prokka_db")
-
 def run_annotation(cons_path:str, out_loc:str,prkName="prokkaAnnotes"):
     """
     Runs prokka to annote the reference assembled genome
@@ -128,19 +287,18 @@ def run_annotation(cons_path:str, out_loc:str,prkName="prokkaAnnotes"):
 
     os.makedirs(out_loc, exist_ok=True)
 
-    run_cmd(f"{prokka_bin} --outdir {out_loc} --prefix {prkName} --kingdom Bacteria --force {cons_path}","Annotation with Prokka")
+    run_cmd(f"prokka --outdir {out_loc} --prefix {prkName} --force {cons_path}","Annotation with Prokka")
 
     return prkName, out_loc
 
-def uniprot_search(ann_path:str, prkName="prokkaAnnotes"):
+def uniprot_search(ann_path:str, prkName="prokkaAnnotes", cache_file="go_cache.json"):
     """
     Uses prokka results to get gene_id, protein_name, EC_number and Gene Onthology via UniProt
     Basically reads the prokka.gbf file and selects the CDS parts and then separetes hypothetical proteins that doesnt have any EC number or UniProt id
     After getting UniProt id, searches it to find Gene Onthologies \n
     Result is writted into a list \n
 
-    NOTE: genes can also be used for UniProt but would need to specify the organism, and i don't think .gbf has it. \n
-    NOTE: Also .gff file can be read too since it has the same information(at least the things we need), but i find .gbf easier on the eyes
+    Also GO data is cached because it takes toooo long!
     """
 
     gbf_file = os.path.join(ann_path, f"{prkName}.gbf")
@@ -153,7 +311,7 @@ def uniprot_search(ann_path:str, prkName="prokkaAnnotes"):
 
     for i , record in enumerate(SeqIO.parse(gbf_file, "genbank"), 1):
         for feature in record.features:
-            if feature != "CDS":
+            if feature.type != "CDS":
                 pass
 
             qualifiers = feature.qualifiers
@@ -178,9 +336,6 @@ def uniprot_search(ann_path:str, prkName="prokkaAnnotes"):
     sys.stdout.write(f"Parsing {len(cds_values)} valid UniProt ids out of {total_CDS}")
 
     print(f"Total with UniProt IDs: {len(cds_values)}")
-    # !TODO: Make another function to check the empty slots for each value and then hit UniProt to fill them
-    # Only values with the UniProt id is written and this includes the hypothetical proteins
-    # Also some proteins have id's but no gene or EC number
     
     # GO Term Search Part
     go = QuickGO()
@@ -188,96 +343,166 @@ def uniprot_search(ann_path:str, prkName="prokkaAnnotes"):
     uniprot_ids = [entry["inference"] for entry in cds_values if entry["inference"]]
 
     go_data = {}
+    go_cache_path = os.path.join(ann_path, cache_file)
 
-    for i, uid in enumerate(uniprot_ids, 1):
-        response = go.Annotation(
-            geneProductId= uid,
-            includeFields= "goName",
-        )
-   
-        go_data[uid] = response.get("results", [])
+    if cache_file and os.path.exists(go_cache_path):
+        print(f"\nFound GO cache: '{go_cache_path}'. Using that")
+        try:
+            with open(go_cache_path, 'r') as f:
+                go_data = json.load(f)
+            print("Loaded GO data from cache.")
+        except Exception as e:
+            print(f"Error loading cache '{go_cache_path}': {e}. Re-fetching all GO terms.")
+            go_data = {} 
 
-        sys.stdout.write(f"\r Searching {i}th GO term out of {len(uniprot_ids)}")
-        sys.stdout.flush()
+    if not go_data:
+        if cache_file:
+            print(f"\nCache not found or empty. Fetching {len(uniprot_ids)} GO terms from QuickGO...")
+        
+        go = QuickGO()
+        
+        for i, uid in enumerate(uniprot_ids, 1):
+            try:
+                response = go.Annotation(
+                    geneProductId= uid,
+                    includeFields= "goName",
+                )
+                go_data[uid] = response.get("results", [])
+            except Exception as e:
+                print(f"\nError fetching GO for {uid}: {e}")
+                go_data[uid] = [] 
 
-    # UniProt ids to KEGG ids part
-    u = UniProt(verbose=False)
+            sys.stdout.write(f"\r Searching {i}th GO term out of {len(uniprot_ids)}")
+            sys.stdout.flush()
+        
+        print("\nFinished fetching GO terms. Yey :)")
 
-    try:
-        mapping_result = u.mapping("UniProtKB_AC-ID", "KEGG", uniprot_ids)
-    except Exception as e:
-        print(f"Warning: failed KEGG mapping: {e}")
-        mapping_result = {}
+        if cache_file:
+            try:
+                with open(go_cache_path, 'w') as f:
+                    json.dump(go_data, f, indent=2)
+                print(f"Saved GO data to cache: '{go_cache_path}'")
+            except Exception as e:
+                print(f"Error saving cache: {e}")
+    
 
-    # Adding the values to dictonary in order to put it in excel file later
+    # Adding the values back to the dictornary
     for d in cds_values:
         uid = d["inference"]
         go_info = go_data.get(uid, [])
-        d["KEGG"] = mapping_result.get(uid)
         d["GO"] = [f"{g['goId']}: {g['goName']}" for g in go_info]
     
-    return mapping_result, cds_values
+    return cds_values
 
-# !FIXME : It downloads something it think? I haven't let it run fully because it showed up as 7 hours long download
-# It's disables as of now
-def kegg_search(KeggIDs):
+def kegg_search(cds_values, ann_path, gene_cache_file="kegg_gene_cache.json", ko_cache_file="kegg_ko_cache.json"):
     """
-    Finds the pathways that has the input protein involved, also results are filtered on organism codes
-    KeggID value should be similiar to {'results': [{'from': 'P43403', 'to': 'hsa:7535'}]}
-    Only to keys' values will be used for pathway creation
+    Function that makes 3 request per second to https://https://rest.kegg.jp/conv/genes/ convert Uniprot ids into KEGG Ids
+    Essentially the same thing as mapping() but doesn't crash the whole VSCode because it forgets to notify the server and makes VSCode think that it crashed
+    Then uses the id to get KO id's, pathways and reactions
     """
-    k = KEGG(verbose=False)
+    gene_cache_path = os.path.join(ann_path, gene_cache_file)
+    ko_cache_path = os.path.join(ann_path, ko_cache_file)
 
-    to_list = [r.get('to') for r in KeggIDs.get('results', []) if r.get('to')]
+    gene_cache = {}
+    if os.path.exists(gene_cache_path):
+        print(f"\nFound KEGG Gene cache: '{gene_cache_path}'. Using that.")
+        with open(gene_cache_path, 'r') as f:
+            gene_cache = json.load(f)
+
+    ko_cache = {}
+    if os.path.exists(ko_cache_path):
+        print(f"Found KEGG KO cache: '{ko_cache_path}'. Using that.")
+        with open(ko_cache_path, 'r') as f:
+            ko_cache = json.load(f)
     
-    orgs = []
-    genes = []
-    for entry in to_list:
-        if ':' in entry:
-            org, gene_id = entry.split(':', 1)
-            orgs.append(org)
-            genes.append(gene_id)
-        else:
-            # If malformed, skip or fill with None
-            orgs.append(None)
-            genes.append(entry)
+    uniprot_ids = [entry["inference"] for entry in cds_values]
+
+    print(f"Doing UniProt to KEGG transform for {len(uniprot_ids)}")
+    uniprot_to_kegg = map_uniprot_to_kegg_via_rest(uniprot_ids)
+    print(f"\nSuccessfully mapped {len(uniprot_to_kegg)} UniProt IDs.")
+
+    total_entries = len(cds_values)
+    for i, entry in enumerate(cds_values, 1):
+        uniprot_id = entry["inference"]
+        kegg_id = uniprot_to_kegg.get(uniprot_id)
+        
+        # Initialize with default empty values
+        entry["kegg_id"] = kegg_id if kegg_id else "N/A"
+        entry["pathways"] = []
+        entry["reactions"] = []
+
+        if not kegg_id:
+            continue
+
+        try:
+            if kegg_id not in gene_cache:
+                time.sleep(0.35) # (max 3 requests/sec)
+                response = requests.get(f"https://rest.kegg.jp/get/{kegg_id}")
+                response.raise_for_status()
+                gene_cache[kegg_id] = response.text
+            
+            gene_entry_text = gene_cache[kegg_id]
+            pathways, ko_number = parse_kegg_entry(gene_entry_text)
+            entry["pathways"] = pathways if pathways else ["N/A"]
+
+            if ko_number:
+                if ko_number not in ko_cache:
+                    time.sleep(0.35) # (max 3 requests/sec)
+                    response = requests.get(f"https://rest.kegg.jp/get/{ko_number}")
+                    response.raise_for_status()
+                    ko_cache[ko_number] = response.text
+                
+                ko_entry_text = ko_cache[ko_number]
+                reactions = parse_ko_entry(ko_entry_text)
+                entry["reactions"] = reactions if reactions else ["N/A"]
+            else:
+                entry["reactions"] = ["N/A (No KO number found)"]
+
+        except requests.exceptions.HTTPError as e:
+            print(f"\nError fetching data for {kegg_id} (from UniProt {uniprot_id}): {e}")
+            entry["pathways"] = [f"Error: {e}"]
+            entry["reactions"] = [f"Error: {e}"]
+        
+        sys.stdout.write(f"\rProcessing {i}/{total_entries} entries...")
+        sys.stdout.flush()
     
-    kegg_results = k.get_pathway_by_gene(gene=genes, organism=orgs)
+    print("\n\nFinished KEGG search.")
+    with open(gene_cache_path, 'w') as f:
+        json.dump(gene_cache, f, indent=2)
+    print(f"Saved KEGG Gene data to cache: '{gene_cache_path}'")
 
-    return kegg_results
+    with open(ko_cache_path, 'w') as f:
+        json.dump(ko_cache, f, indent=2)
+    print(f"Saved KEGG KO data to cache: '{ko_cache_path}'")
 
-def excel_creation(cds_values, kegg_results, output_file="annotation_results.xlsx"):
+    return cds_values
+
+def excel_creation(enriched_cds_values, output_file="annotation_results.xlsx"):
     """
-    Writes CDS annotations and KEGG pathway results into an Excel file.
+    Writes the final, enriched CDS annotations into a single Excel sheet.
     """
     wb = Workbook()
+    ws = wb.active
+    ws.title = "Annotations"
 
-    # --- Sheet 1: CDS values ---
-    ws1 = wb.active
-    ws1.title = "CDS_Annotations"
+    if not enriched_cds_values:
+        print("Warning: No data to write to Excel file.")
+        ws.append(["No data found"])
+        wb.save(output_file)
+        return
 
-    # Write headers dynamically
-    headers = list(cds_values[0].keys()) if cds_values else []
-    ws1.append(headers)
+    # Write headers dynamically from the keys of the first entry
+    headers = list(enriched_cds_values[0].keys())
+    ws.append(headers)
 
-    for entry in cds_values:
-        # Convert lists (like GO) to comma-separated strings
+    # Write the data rows
+    for entry in enriched_cds_values:
+        # Convert list values to comma-separated strings for cleaner Excel output
         row = [
-            ", ".join(v) if isinstance(v, list) else v
-            for v in entry.values()
+            ", ".join(map(str, entry.get(h, []))) if isinstance(entry.get(h), list) else entry.get(h, "")
+            for h in headers
         ]
-        ws1.append(row)
-
-    # --- Sheet 2: KEGG pathways ---
-    ws2 = wb.create_sheet("KEGG_Pathways")
-    ws2.append(["KEGG_ID", "Pathway_ID", "Pathway_Name"])
-
-    for gene, data in kegg_results.items():
-        if not data:
-            continue
-        pathways = data.get('pathways', {})
-        for pid, pname in pathways.items():
-            ws2.append([gene, pid, pname])
+        ws.append(row)
 
     wb.save(output_file)
     print(f"✅ Results written to '{output_file}'")
@@ -291,21 +516,42 @@ def run_pipeline(ref_path, fastq1, fastq2, out_dir="results", threads=4, prk_pre
     bcf_and_gz = os.path.join(out_dir, "bcf")
     prokka_out = os.path.join(out_dir, "prk")
 
-    # Alignment
-    sam_file = run_alignement(ref_path, fastq1, fastq2, out_loc=align_and_sam, threads=threads)
-    sorted_bam = run_samtools(sam_file, threads=threads, out_loc=align_and_sam)
-    gz_vcf = run_bcftools(ref_path, sorted_bam, out_loc=bcf_and_gz)
-    cons_fasta = run_reference_assembly(ref_path, gz_vcf, out_loc=bcf_and_gz)
-    prkName, prk_path = run_annotation(cons_fasta, out_loc=prokka_out, prkName=prk_prefix)
+    # Names for stopping the repeptition
+    base_name = os.path.splitext(os.path.basename(ref_path))[0]
+    sam_file = os.path.join(align_and_sam, f"{base_name}.sam")
+    sorted_bam = os.path.join(align_and_sam, f"{base_name}_sorted.bam")
+    gz_vcf = os.path.join(bcf_and_gz, f"{base_name}.vcf.gz")
+    cons_fasta = os.path.join(bcf_and_gz, f"{base_name}.fasta")
+    prk_gbk = os.path.join(prokka_out, f"{prk_prefix}.gbf")
 
-    # Protein search & KEGG mapping
-    mapping_result, cds_values = uniprot_search(prkName=prkName, ann_path=prk_path)
+    # Checks for file
+    if not check_existing_file(sam_file, "Alignemnt and Sam file creation"):
+        sam_file = run_alignement(ref_path, fastq1, fastq2, out_loc=align_and_sam, threads=threads)
+
+    if not check_existing_file(sorted_bam, "Sorting the Bam file"):
+        sorted_bam = run_samtools(sam_file, threads=threads, out_loc=align_and_sam)
+
+    if not check_existing_file(gz_vcf, "Collapsing Reads"):
+        gz_vcf = run_bcftools(ref_path, sorted_bam, out_loc=bcf_and_gz)
+
+    if not check_existing_file(cons_fasta, "Consensus File Creation"):
+        cons_fasta = run_reference_assembly(ref_path, gz_vcf, out_loc=bcf_and_gz)
+
+    if not os.path.exists(prk_gbk):
+        prk_gbk = os.path.join(prokka_out, f"{prk_prefix}.gbk")
+    if not check_existing_file(prk_gbk, "annotation (Prokka)"):
+        prkName, prk_path = run_annotation(cons_fasta, out_loc=prokka_out, prkName=prk_prefix)
+    else:
+        prkName, prk_path = prk_prefix, prokka_out
+
+    cds_values = uniprot_search(prkName=prk_prefix, ann_path=prk_path)
     
-    #kegg_results = kegg_search(mapping_result)
-    kegg_results = {}
+    if cds_values:
+        print("\n--- Running KEGG Pathway and Reaction Search ---")
+        enriched_results = kegg_search(cds_values, ann_path=prk_path)
 
-    # Excel output
-    excel_creation(cds_values, kegg_results, output_file=os.path.join(out_dir, excel_file))
+        print("\n--- Creating Excel Report ---")
+        excel_creation(enriched_results, output_file=os.path.join(out_dir, excel_file))
 
     print("✅ Pipeline finished successfully!")
 
