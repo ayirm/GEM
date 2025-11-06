@@ -1,0 +1,1 @@
+Bu çalışma kapsamında organizmanın antibiyotik direncinin metabolik düzeyde anlaşılması ve bu direncin azaltılmasına yönelik in silico yaklaşımların geliştirilmesi amacıyla genom-düzeyinde metabolik modelleme (GEM) sürecinin temel adımlarını sistematik olarak uygulamayı hedeflemektedir. Proje kapsamında *Escherichia coli K-12* model organizması ile çalışılmıştır.
