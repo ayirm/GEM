@@ -16,3 +16,32 @@ Metabolik modelin genom verileriyle desteklenebilmesi için E. coli K-12 organiz
 Tüm bu analizlerin sonucunda modelde kullanılmak üzere kapsamlı bir EC number listesi elde edildi. Bu EC numaralarının her biri potansiyel bir enzimatik aktiviteyi temsil ettiği için, bunları doğru reaksiyonlarla eşleştirmek metabolik ağın güvenilir bir şekilde kurulması açısından zorunludur. Geliştirilen get_ec_number_from_uniprot.py script kullanılarak EC numaraları UniProt veritabanı üzerinden sistematik olarak sorgulanmıştır. Script, her EC numarası için önce doğrudan (Direct, EC → Reaction ID) eşleşme aramakta; eğer doğrudan bir reaksiyon bilgisi elde edilemezse, bu kez dolaylı yöntem (Indirect, EC → KO → Reaction) kullanılarak önce EC numarasına karşılık gelen KEGG Orthology (KO) belirlenmekte ve ilgili KO üzerinden reaksiyon ID’leri çıkarılmaktadır. er iki yöntemin sonucunda bulunan reaksiyon ID’leri, reaksiyon tanımları, hangi yöntemin kullanıldığı ve ilişkili KO numaraları bir Excel dosyasına aktarılmıştır. Elde edilen çıktıda Original_EC_Number, Searched_EC_Number, Reaction_ID, Definition, Find_Method ve Associated_KO sütunları yer almakta olup; böylece her EC numarasının metabolik ağdaki konumu, doğrudan mı yoksa dolaylı yoldan mı tespit edildiği açık biçimde belgelenmiştir.
 
 ## Kodların birleştirilmesi (KEGG_merge.py)
+KEGG_merge.py scripti, hem NGS verilerinin işlenmesini hem de anotasyon tabanlı metabolik bilgi çıkarımını tek bir iş akışında birleştirerek projenin veri entegrasyon kısmını tamamlamıştır. Script ilk olarak E. coli K-12’ye ait ham dizileme verileri üzerinde çalışarak FastQC, Trimmomatic, Bowtie2, SAMtools/BAMtools ve SPAdes adımlarından oluşan standart NGS analiz sürecini otomatik olarak yürütmektedir. Ardından script, işlenmiş genom verileri üzerinden veya doğrudan kullanıcı tarafından sağlanan EC numaralarından yararlanarak UniProt veritabanında detaylı bir fonksiyonel eşleştirme gerçekleştirmektedir. Bu eşleştirme sırasında her bir enzim için gene, inference, product, EC_number, GO_terms, KEGG ID, pathways, reactions_by_pathway ve compounds_by_reaction gibi çok katmanlı anotasyon verileri toplanmaktadır. Bu bilgiler; enzimin hangi gen tarafından kodlandığı, hangi metabolik süreçte yer aldığı, görev aldığı reaksiyonlar, bağlı olduğu yolaklar ve reaksiyonların kullandığı/ürettiği bileşikler gibi model kurulumunda kritik öneme sahip tüm öğeleri kapsamaktadır. Script, tüm bu bilgileri işleyerek her enzim için eksiksiz bir biyolojik profil oluşturmakta ve sonuçları düzenli bir Excel dosyasına sütunlar hâlinde aktarmaktadır.
+
+## BRITE
+BRITE sistemi, genler, proteinler, KO grupları, metabolik yolaklar ve fonksiyonel modüller arasındaki ilişkileri üst düzey bir organizasyon yapısı içinde sunarak metabolik ağın biyolojik bağlamda doğru yorumlanmasına katkı sağlar. KEGG_brite_veri_cekme.py scirpti kullanıcıdan pathway adı alarak KEGG BRITE veritabanına bağlanmakta ve o yolakla ilişkili tüm fonksiyonel sınıflandırmaları otomatik olarak indirmektedir. Script, yine KEGG API üzerinden sorgulama yaparak pathway’e bağlı olan tüm KO kimliklerini (KEGG Orthology IDs), bu KO’lara ait fonksiyonel açıklamaları, ilişkili organizma bilgilerini, gen ve protein tanımlarını, varsa modül (Module) kimliklerini ve yolak bağlantılarını sistematik biçimde toplamaktadır. Bu bilgiler derlendikten sonra elde edilen sonuçlar tek bir tablo hâline getirilerek Excel dosyasına aktarılmakta ve çıktı dosyasında Original_Search_ID, KEGG_ID, NAME, Organism_Code, Organism_Name, KO_IDs, Orthology_Info, Pathway_Info ve Module_IDs başlıkları altında sunulmaktadır.
+
+# Flux Balance Analysis (FBA) Temel kavramlar
+**Stoikiometrik Matris (S-matrix)**: Metabolitleri satırlarda, reaksiyonları sütunlarda gösteren temel matristir. Her hücredeki değer, o reaksiyonda ilgili metabolitin üretim (+) veya tüketim (–) katsayısını temsil eder.
+
+**Metabolik Akı Vektörü (v)**: Modeldeki her reaksiyonun hızını (flux değerini) içeren vektördür. FBA çözümünün temel çıktısını oluşturur.
+
+**Durağan Hâl Varsayımı (Steady-State):** Hücre içi metabolit derişimlerinin zamanla değişmediği kabulüdür. Matematiksel olarak S · v = 0 denklemiyle ifade edilir.
+
+**Reaksiyon Sınırları (Bounds):** Her reaksiyon için minimum ve maksimum akış limitleridir. Bir reaksiyonun reversible (iki yönlü) veya irreversible (tek yönlü) olup olmadığını belirler.
+
+**Amaç Fonksiyonu (Objective Function):** Modelin optimize etmeye çalıştığı biyolojik hedeftir. Genellikle bakteriler için biyokütle (growth) reaksiyonunun maksimize edilmesi seçilir.
+
+**Besin ve Çevresel Kısıtlar (Constraints):** Hücrenin içinde bulunduğu ortama göre belirlenen sınırlardır. Örneğin glukoz alımının sınırlandırılması veya oksijenin kapatılması gibi.
+
+**Lineer Programlama (LP) Problemi:** FBA’nin matematiksel çözüm şeklidir. Amaç fonksiyonu, sınırlar ve steady-state denklemi birlikte bir LP optimizasyonu oluşturur.
+
+**Optimal Akı Dağılımı:** FBA sonucunda elde edilen, hücrenin belirlenen amaç fonksiyonuna göre en uygun metabolik akı profilidir.
+
+**FBA Çözümü:** Modeldeki tüm reaksiyonlar için hesaplanan optimum akı değerleridir; hangi yolakların daha aktif olduğunu gösterir.
+
+**Biyokütle (Biomass) Reaksiyonu:** Hücre büyümesini temsil eden sentetik bir reaksiyondur. Hücre bileşenleri (DNA, RNA, protein, lipid vb.) belirli oranlarda kullanılır. FBA’de genellikle optimize edilen hedef budur.
+
+**Tek Gen/ Tek Reaksiyon Silme Analizleri:** Modelde bir genin veya reaksiyonun silinmesi durumunda büyüme hızının nasıl etkilendiğini hesaplamak için yapılır.
+
+**Flux Variability Analysis (FVA):** Aynı büyüme seviyesini koruyarak her reaksiyonun alabileceği minimum ve maksimum akı değerlerini hesaplar; metabolik esnekliği gösterir.
