@@ -45,13 +45,12 @@ Bu nedenle prokka sonucundan çıkan genbank dosyalarından:
 - enzim adı
 - uniprot id
 bilgileri elde edilmiştir. 
->[!info]
-> Genbank dosyasının(.gbk veya .gbf) okunması `KEGG_merge.py` içerisinde `uniprot_search` fonksiyonu ile yapılmaktadır.
+>Genbank dosyasının(.gbk veya .gbf) okunması `KEGG_merge.py` içerisinde `uniprot_search` fonksiyonu ile yapılmaktadır.
 
 Sonrasında KEGG'de reaksiyonları aratabilmek için Uniprot ID'ler, Uniprot'un sitesine(`https://rest.uniprot.org/idmapping`) gönderilerek her bir Uniprot ID'ye karşılık gelen KEGG ID'ler bulunmuştur.
 Elde edilen KEGG ID'ler bu sefer KEGG'in web sitesine(`https://rest.kegg.jp`) gönderilerek yolak(pathway) bilgileri elde edilmiştir. Bu işlem sonrasında her bir yolak için tekrarlanmıştır ve her bir yolakta bulunan reaksiyonlar ve bu reaksiyonlardaki moleküller(compounds) bulunmuştur.
->[!info]
 >Uniprot ID'lerden KEGG ID'lere geçiş için `KEGG_merge.py` dosyasındaki `map_uniprot_to_kegg_via_rest` fonksiyonu kullanılmıştır.
+
 ### KO Terimleri
 KEGG, enzimleri aratırken bu enzimlerin orthology(ortoloji) bilgilerini de barındırır. Bu bilgileri ise KEGG Orthology(KO) olarak kaydeder. 
 
@@ -72,7 +71,7 @@ BRITE hiyerarşileri:
 için oluşturulmuş ve genelden özele giden bir listedir.
 
 Bir KEGG ID'si birden fazla BRITE hiyerarşisine sahip olabilir. Modellemede sırasında en fazla KO terimleri ve Reaksiyonlar için olan BRITE hiyerarşileri elde edilmiştir.
->[!info]
+
 >`KEGG_merge.py` içerisindeki `KEGGClient` sınıfı ve `kegg_search` fonksiyonu KO terimleri ve BRITE hiyerarşisi dışındaki bilgileri bulmaktadır.
 > BRITE hiyerarşisi ve KO bilgisi `GenomeToPathway.py` dosyası ile bulunabilmektedir.
 
@@ -85,7 +84,7 @@ Bu terimler 3 ana başlık altında toplanır:
 - *Cellular Component(Hücrese Konum)*, gen ürünün işlevini hücrenin hangi parçasında gerçekleştirdiğini gösterir. Örneğin: Ribozom, Hücre Zarı
 
 Bütün bunların sonucunda ise bir gen ürününe ait bütün bilgiler sıralanmış olur ve isimlendirmedeki karışıklıklar önlenir.
->[!info]
+
 >`KEGG_merge.py` içerisindeki `uniprot_search` fonksiyonu GO terimleri bulmasında kullanılmaktadır.
 
 ## Sonuçların Bir Araya Getirilmesi
