@@ -44,14 +44,17 @@ Bu nedenle prokka sonucundan çıkan genbank dosyalarından:
 - gen adı
 - enzim adı
 - uniprot id
-bilgileri elde edilmiştir. 
->[!info]
+bilgileri elde edilmiştir.
+
+> [!NOTE] 
 > Genbank dosyasının(.gbk veya .gbf) okunması `KEGG_merge.py` içerisinde `uniprot_search` fonksiyonu ile yapılmaktadır.
 
 Sonrasında KEGG'de reaksiyonları aratabilmek için Uniprot ID'ler, Uniprot'un sitesine(`https://rest.uniprot.org/idmapping`) gönderilerek her bir Uniprot ID'ye karşılık gelen KEGG ID'ler bulunmuştur.
 Elde edilen KEGG ID'ler bu sefer KEGG'in web sitesine(`https://rest.kegg.jp`) gönderilerek yolak(pathway) bilgileri elde edilmiştir. Bu işlem sonrasında her bir yolak için tekrarlanmıştır ve her bir yolakta bulunan reaksiyonlar ve bu reaksiyonlardaki moleküller(compounds) bulunmuştur.
->[!info]
->Uniprot ID'lerden KEGG ID'lere geçiş için `KEGG_merge.py` dosyasındaki `map_uniprot_to_kegg_via_rest` fonksiyonu kullanılmıştır.
+
+> [!NOTE] 
+> Uniprot ID'lerden KEGG ID'lere geçiş için `KEGG_merge.py` dosyasındaki `map_uniprot_to_kegg_via_rest` fonksiyonu kullanılmıştır.
+
 ### KO Terimleri
 KEGG, enzimleri aratırken bu enzimlerin orthology(ortoloji) bilgilerini de barındırır. Bu bilgileri ise KEGG Orthology(KO) olarak kaydeder. 
 
@@ -72,8 +75,9 @@ BRITE hiyerarşileri:
 için oluşturulmuş ve genelden özele giden bir listedir.
 
 Bir KEGG ID'si birden fazla BRITE hiyerarşisine sahip olabilir. Modellemede sırasında en fazla KO terimleri ve Reaksiyonlar için olan BRITE hiyerarşileri elde edilmiştir.
->[!info]
->`KEGG_merge.py` içerisindeki `KEGGClient` sınıfı ve `kegg_search` fonksiyonu KO terimleri ve BRITE hiyerarşisi dışındaki bilgileri bulmaktadır.
+
+> [!NOTE] 
+> `KEGG_merge.py` içerisindeki `KEGGClient` sınıfı ve `kegg_search` fonksiyonu KO terimleri ve BRITE hiyerarşisi dışındaki bilgileri bulmaktadır.
 > BRITE hiyerarşisi ve KO bilgisi `GenomeToPathway.py` dosyası ile bulunabilmektedir.
 
 ### GO Terimleri
@@ -85,7 +89,8 @@ Bu terimler 3 ana başlık altında toplanır:
 - *Cellular Component(Hücrese Konum)*, gen ürünün işlevini hücrenin hangi parçasında gerçekleştirdiğini gösterir. Örneğin: Ribozom, Hücre Zarı
 
 Bütün bunların sonucunda ise bir gen ürününe ait bütün bilgiler sıralanmış olur ve isimlendirmedeki karışıklıklar önlenir.
->[!info]
+
+> [!NOTE] 
 >`KEGG_merge.py` içerisindeki `uniprot_search` fonksiyonu GO terimleri bulmasında kullanılmaktadır.
 
 ## Sonuçların Bir Araya Getirilmesi
@@ -97,8 +102,42 @@ En son adım ise bütün bu bilgiler tek bir excel dosyası olarak kaydedilmişt
 | ---- | --------- | ------- | --------- | -------- | ------- | -------- | -------------------- | ------------------- |
 | Gen ADı | Uniprot ID'si | Enzim Adı | EC değeri | GO Terimleri | KEGG ID'si | Bulunduğu Yolaklar | Yolakların içerdiği reaksiyonlar | Reaksiyonların içeridği moleküller |
 
-Bunun dışında S Matriksi oluşturan kod yazılmıştır ancak `kegg_merge.py` içine eklenmemiştir. 
+Bunun dışında S Matriksi oluşturan kod[^3] yazılmıştır ancak `kegg_merge.py` içine eklenmemiştir. 
+# CobraPy ve FBA
+Fastq okumalarından matriks oluşturma dışında CobraPy kullanılarak model oluşturma kavramları da öğrenilmiştir, bu denemeler repository içerisinde bulunmamaktadır[^4]. 
+CobraPy ile yapılan denemelerde *FBA(Akı-Denge Analizleri)* ve *Stoichiometric Matrix(S)/Stokiyometrik Matriks* kavramları öğrenilmiştir.
 
-[^1] : *Escherichia coli K-12* ve *Escherichia coli O157:H7*
+## FBA
+FBA, durağan halde(steady-state) bulunan bir matriks ve tanımlanan sınırlar içerisinde, istenilen bir akı değerinin(Çözüm/Solution) lineer cebir ile maksimize edilmesidir. Burada istenilen akı değeri genelde biyokütle artması olsa bile, bir maddenin üretimini azaltılmaya çalışılması da olabilir.
 
-[^2] : SRR35660962 ve ec1_S1_L001_R1_001.fastq.gz ile ec1_S1_L001_R2_001.fastq.gz
+**Durağan Hal:** Hücredeki metabolitlerin zaman içerisindeki değişiminin sıfıra eşit olmasıdır. Matematiksel olarak $S \cdot v=0$ şeklinde gösterilir ve problemler çözülürken bu duruma uyulması gerekir. Örneğin biyokütle artarken, modelde madde birikmemelidir.
+
+### pFBA(Parsimonious FBA)
+Bu analiz metodunda, çözüm değeri maksimum tutulurken $S \cdot v = 0$ bozulmadan oluşacak **toplam minimum** akı değeri hesaplanır. Başka bir deyişle, "sonucumuz en yüksek iken en az kaç yol kullanılır?" sorusunun cevabıdır.
+
+### Stoichiometric Matriks - Reaksiyon Vektörleri - Reaksiyon Limitleri
+**Stoichiometric matriks(S-Matriks)**: Modelde bulunan bütün metabolitleri ve üretim-tüketim miktarlarını gösteren bir seyrek matrikstir, yani genel olarak sıfırlardan oluşur.
+**Reaksiyon vektörleri(v)**: Modelde bulunan bütün reaksiyonların akı değerlerinin gösteren bir listedir.
+
+Reaksiyon vektörleri, artı veya eksi değer alabilirler. Eğer bir reaksiyon vektörü eksi değer alabiliyorsa, ters yönde çalıştığı anlamına gelir. 
+Reaksiyonun hangi yönde çalıştığı ve hızı biliniyorsa buna bağlı olarak *sınırlar(constraints/bounds)* eklenebilir.
+> [!TIP]
+> CobraPy aksi belirtilmedikte her reaksiyonu tek yönlü olarak kabul eder
+
+## FVA
+FVA(Flux-Variability Analysis/Akı-Değişim Analizi), birden fazla FBA sonucu aynı optimal çözümü veriyorsa kullanır. Bu sayede çözüm sırasında reaksiyonların ne kadar esnek olabileceği bulunur. 
+
+> [!TIP]
+> Bu durum hücrenin optimal bir koşulda çalıştığını düşünür. Eğer bu durum değiştirilmek isteniyorsa CobraPy'da `flux_variability_analysis` fonksiyonuna  `fraction_of_optimum` koşulu eklenebilir.
+
+
+
+---
+
+[^1]: *Escherichia coli K-12* ve *Escherichia coli O157:H7*
+
+[^2]: SRR35660962 ve ec1_S1_L001_R1_001.fastq.gz ile ec1_S1_L001_R2_001.fastq.gz
+
+[^3]: reaction_stoichiometry_calculator.py
+
+[^4]: CobrayPy ile yapılan denemeler DogaTestere/CobraPyTest repositorysi içerisindeki `main` ve `iML1515` branchlerinde bulunmaktadır.
