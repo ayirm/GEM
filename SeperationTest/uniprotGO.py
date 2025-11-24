@@ -1,7 +1,11 @@
-import sys, json, os
+import sys
+import json
+import os
+import time
 
 from Bio import SeqIO
 from bioservices import QuickGO
+from tqdm import tqdm
 
 class UniprotGO:
     def __init__(self, annPath, prkName="prokkaAnnotes", cacheFile="go_cache.json"):
@@ -16,24 +20,29 @@ class UniprotGO:
     def __save_cache(self):
         try:
             with open(self.cachePath, "w") as cache:
-                json.dump(self.cachePath, cache, indent=2)
+                json.dump(self.go_data, cache, indent=2)
             print(f"Saved the cache in {self.cachePath}")
         except Exception as e:
             print(f"An error happened \n {e}", file=sys.stderr)
 
     def __check_cache(self):
+        self.cache_exists = False
         if os.path.exists(self.cachePath):
             print(f"Found cache at {self.cachePath}")
             try:
                 with open(self.cachePath, "r") as cache:
                     self.go_data = json.load(cache)
-                print(f"Loaded from cache")
+                print("\n Loaded from cache")
+                self.cache_exists = True
+                return self.cache_exists
             except Exception as e:
                 print(f"Something happened: \n {e}")
                 self.go_data = {}
+                return self.cache_exists
         else:
-            print(f"No cache found")
+            print("\n No cache found")
             self.go_data = {}
+            return self.cache_exists
 
 
     def __parse_gb_file(self, gbFile):
@@ -88,20 +97,22 @@ class UniprotGO:
         if not new_ids:
             print("---Cache: No new id's to check")
             return
+
         
-        for i, uid in enumerate(new_ids, 1):
+        for uid in tqdm(new_ids, desc="Fetching GO terms"):
             try:
                 response = self.go.Annotation(
-                    geneProductId= uid,
-                    includeFields="goName",
+                    geneProductId=uid, 
+                    includeFields="goName"
                 )
                 self.go_data[uid] = response.get("results", [])
             except Exception as e:
                 print(f"Something happened for {uid}: \n {e}")
-                self.go_data[uid] = []
+                # self.go_data[uid] = []
+            time.sleep(0.1)
 
-            sys.stdout.write(f"Searching {i}/{len(new_ids)} for the GO terms")
-            sys.stdout.flush()
+        sys.stdout.write(f"Searching {len(uid)}/{len(new_ids)} for the GO terms")
+        sys.stdout.flush()
 
         self.__save_cache()
 
@@ -109,22 +120,24 @@ class UniprotGO:
         """
         Checks the genbank file(.gbf or .gbk) then gets the uniprot id's from the file
         Which is then checked against the GO site with QuickGO
-        Results of GO search only includes Biological Process
         """
         gb_file = os.path.join(self.annPath, f"{self.prkName}.gbf")
         if not os.path.exists(gb_file):
-            gb_file = os.path.join(self.ann_path, f"{self.prkName}.gbk")
+            gb_file = os.path.join(self.annPath, f"{self.prkName}.gbk")
 
         cds_values = self.__parse_gb_file(gbFile=gb_file)
         
         self.__check_cache()
-
-        self.__search_GO(cds_values=cds_values)
+        if self.cache_exists:
+            pass
+        else:
+            self.__search_GO(cds_values=cds_values)
 
         for entry in cds_values:
             uid = entry["UniProt_ID"]
             go_terms = self.go_data.get(uid, [])
-            entry["GO_Terms"] = "\n".join([f"{g["goID"]}: {g["goName"]}" for g in go_terms]) if go_terms else "N/A"
+            #print(f"DEBUG: {uid} GO data: {go_terms}")
+            entry["GO_Terms"] = "\n".join([f"{g.get('goID', 'N/A')}: {g["goName"]}" for g in go_terms]) if go_terms else "N/A"
 
-        print(f"GO Term search is complete")
+        print("GO Term search is complete")
         return cds_values

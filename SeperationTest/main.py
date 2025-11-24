@@ -1,4 +1,7 @@
-import subprocess, os, sys, argparse
+import subprocess
+import os
+import sys
+import argparse
 import pandas as pd
 
 from uniprotGO import UniprotGO
@@ -135,17 +138,17 @@ def run_reference_assembly(ref_path:str, gz_loc:str, out_loc:str):
     run_cmd(f"bcftools consensus -f {ref_path} {gz_loc} > {cons_loc}","Creating consensus sequence")
     return cons_loc
 
-def run_annotation(cons_path:str, out_loc:str,prkName="prokkaAnnotes"):
+def run_annotation(cons_path:str, out_loc:str,prkName="prokkaAnnotes",kingdom_name="Bacteria"):
     """
     Runs prokka to annote the reference assembled genome
     """
     os.makedirs(out_loc, exist_ok=True)
-    run_cmd(f"prokka --outdir {out_loc} --prefix {prkName} --force {cons_path}","Annotation with Prokka")
+    run_cmd(f"prokka --kingdom {kingdom_name} --outdir {out_loc} --prefix {prkName} --force {cons_path}","Annotation with Prokka")
     return prkName, out_loc
 
 # --- Other file calling and excel writing
 
-def run_pipeline(ref_path, fastq1, fastq2, out_dir="results", threads=4, prk_prefix="prokkaAnnotes", excel_file="annotation_results.xlsx"):
+def run_pipeline(ref_path, fastq1, fastq2, out_dir="results", threads=4, prk_prefix="prokkaAnnotes", excel_file="annotation_results.xlsx", kingdom_name="Bacteria"):
     os.makedirs(out_dir, exist_ok=True)
 
     # Folders in folders part
@@ -177,16 +180,16 @@ def run_pipeline(ref_path, fastq1, fastq2, out_dir="results", threads=4, prk_pre
     if not os.path.exists(prk_gbk):
         prk_gbk = os.path.join(prokka_out, f"{prk_prefix}.gbk")
     if not check_output_files(prk_gbk, "annotation (Prokka)"):
-        prkName, prk_path = run_annotation(cons_fasta, out_loc=prokka_out, prkName=prk_prefix)
+        prkName, prk_path = run_annotation(cons_fasta, out_loc=prokka_out, prkName=prk_prefix, kingdom_name=kingdom_name)
     else:
         prkName, prk_path = prk_prefix, prokka_out
 
-    print(f"---Control: Starting parsing and GO Term finding")
+    print("---Control: Starting parsing and GO Term finding")
     goTerms = UniprotGO(annPath=prk_path, prkName=prk_prefix)
     cds_values = goTerms.organize_GO()
-    print(f"---Control: Parsing and GO term finding ended")
+    print("---Control: Parsing and GO term finding ended")
 
-    print(f"---Control: Turning UniProtIDs to KEGG IDs")
+    print("---Control: Turning UniProtIDs to KEGG IDs")
     uniprotID = [entry["UniProt_ID"] for entry in cds_values if entry["UniProt_ID"]]
     mapping = UniprotMapping()
     mapping_dict = mapping.organize_Mapping(uniProt_ids=uniprotID)
@@ -195,7 +198,7 @@ def run_pipeline(ref_path, fastq1, fastq2, out_dir="results", threads=4, prk_pre
         uid = entry.get("UniProt_ID")
         entry["KEGG_ID"] = mapping_dict.get(uid)
 
-    print(f"---Control: Get the pathway and the linked info from KEGG")
+    print("---Control: Get the pathway and the linked info from KEGG")
     # We need to run keggAPI for every seperated value, for loop can be run either in here or in KeggAPI
     keggRequests = KeggAPI(cdsValues=cds_values)
 
@@ -219,7 +222,7 @@ def run_pipeline(ref_path, fastq1, fastq2, out_dir="results", threads=4, prk_pre
         else:
             print(f"[{i}] No KEGG data found for {kID}")
 
-    print(f"---Control: Create the excel file")
+    print("---Control: Create the excel file")
     export_to_excel(cds_values, output_path="annotation_results.xlsx")
 
 
@@ -232,6 +235,7 @@ if __name__ == "__main__":
     parser.add_argument("--threads", type=int, default=4, help="Number of threads for alignment (default: 4)")
     parser.add_argument("--prk_prefix", default="prokkaAnnotes", help="Prefix for Prokka annotation (default: prokkaAnnotes)")
     parser.add_argument("--excel_file", default="annotation_results.xlsx", help="Excel output file name (default: annotation_results.xlsx)")
+    parser.add_argument("--kingdom", default="Bacteria", help="Choose a specific kingdom for prokka(Viruses are not supported, deafult:Bacteria)")
 
     args = parser.parse_args()
 
