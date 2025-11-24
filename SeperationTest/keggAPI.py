@@ -1,29 +1,36 @@
-import os, json, time, requests, sys, re
+import os
+import json
+import time
+import requests
+import sys
+import re
+from tqdm import tqdm
 
 class KeggAPI:
-    def __init__(self, cdsValues, cacheFile="Kegg_Cache.json"):
+    def __init__(self, cdsValues, cacheFile="Kegg_Cache.json", outDir="results"):
         self.cacheFile = cacheFile
         self.rateLimit = 0.35
         self.lastRequestTime = 0
         self.cdsValues = cdsValues
+
+        self.cachePath = os.path.join(outDir, self.cacheFile)
         self.keggResults = self.__load_cache()
 
-
     def __load_cache(self):
-        if os.path.exists(self.cacheFile):
+        if os.path.exists(self.cachePath):
             try:
-                with open(self.cacheFile, "r") as f:
+                with open(self.cachePath, "r") as f:
                     data = json.load(f)
-                print(f"[---Cache: Loaded {len(data)} pathways from {self.cacheFile}")
+                print(f"[---Cache: Loaded {len(data)} pathways from {self.cachePath}")
                 return data
             except json.JSONDecodeError:
-                print(f"---Cache: {self.cacheFile} is broken. Starting new")
+                print(f"---Cache: {self.cachePath} is broken. Starting new")
         return {}
 
     def __save_cache(self):
-        with open(self.cacheFile, "w") as f:
+        with open(self.cachePath, "w") as f:
             json.dump(self.keggResults, f, indent=2)
-            print(f"---Cache: Saved the cache")
+            print("---Cache: Saved the cache")
 
     BASE_URL = "https://rest.kegg.jp"
 
@@ -231,17 +238,17 @@ class KeggAPI:
         }
 
         resultsDict["KO_Terms"] = self.__find_ko_numbers(idPage)
-        print(f"---Debugging: Finished KO Terms")
+        # print("---Debugging: Finished KO Terms")
 
         resultsDict["BRITE"] = self.__find_full_brite(idPage)
-        print(f"---Debuggging: Finished BRITE hieacrhy")
+        # print("---Debuggging: Finished BRITE hieacrhy")
 
         resultsDict["BRITE_id"] = self.__find_brite_numbers(idPage)
-        print(f"---Debugging: Found brite id's")
+        # print("---Debugging: Found brite id's")
 
         pathways = self.__find_pathways(idPage)
         resultsDict["pathways"] = pathways
-        print(f"---Debugging: Found the pathways")
+        # print("---Debugging: Found the pathways")
 
         allReactions = set()
         processedMaps = {}
@@ -255,21 +262,26 @@ class KeggAPI:
             if mapID in processedMaps:
                 reactionID = processedMaps[mapID]
             else:
-                reactionID = self.__get_linked_page("reaction",mapID)
+                reactionID = self.__get_linked_page("reaction", mapID)
                 processedMaps[mapID] = reactionID
 
             if reactionID:
                 resultsDict["reactions"][pID] = reactionID
                 allReactions.update(reactionID)
-        # This stops the repeated map: ids from being send
-        print(f"---Debugging: Reactions per mapID found")
+        # print("---Debugging: Reactions per mapID found")
 
-        for i, rnID in enumerate(allReactions, 1):
-            sys.stdout.write(f"Processing reaction {i}/{len(allReactions)} ({rnID})")
-            sys.stdout.flush()
+        #for i, rnID in enumerate(allReactions, 1):
+        #    sys.stdout.write(f"Processing reaction {i}/{len(allReactions)} ({rnID})")
+        #    sys.stdout.flush()
+        #    equations = self.__find_compounds(rnID)
+        #    resultsDict["compunds"] = equations
+
+        pbar = tqdm(allReactions, desc="Processing reactions", unit="rxn")
+        for rnID in pbar:
             equations = self.__find_compounds(rnID)
             resultsDict["compunds"] = equations
-        print(f"---Debugging: Finished compound info")
+            pbar.set_postfix({"rnID": rnID})
+        print("---Debugging: Finished compound info")
 
         self.__save_cache()
 

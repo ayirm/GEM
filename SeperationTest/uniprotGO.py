@@ -28,19 +28,19 @@ class UniprotGO:
     def __check_cache(self):
         self.cache_exists = False
         if os.path.exists(self.cachePath):
-            print(f"Found cache at {self.cachePath}")
+            print(f"\nFound cache at {self.cachePath}")
             try:
                 with open(self.cachePath, "r") as cache:
                     self.go_data = json.load(cache)
-                print("\n Loaded from cache")
+                print("\nLoaded from cache")
                 self.cache_exists = True
                 return self.cache_exists
             except Exception as e:
-                print(f"Something happened: \n {e}")
+                print(f"\nSomething happened: \n {e}")
                 self.go_data = {}
                 return self.cache_exists
         else:
-            print("\n No cache found")
+            print("\nNo cache found")
             self.go_data = {}
             return self.cache_exists
 
@@ -108,7 +108,7 @@ class UniprotGO:
                 self.go_data[uid] = response.get("results", [])
             except Exception as e:
                 print(f"Something happened for {uid}: \n {e}")
-                # self.go_data[uid] = []
+                self.go_data[uid] = []
             time.sleep(0.1)
 
         sys.stdout.write(f"Searching {len(uid)}/{len(new_ids)} for the GO terms")
@@ -137,7 +137,9 @@ class UniprotGO:
             uid = entry["UniProt_ID"]
             go_terms = self.go_data.get(uid, [])
             #print(f"DEBUG: {uid} GO data: {go_terms}")
-            entry["GO_Terms"] = "\n".join([f"{g.get('goID', 'N/A')}: {g["goName"]}" for g in go_terms]) if go_terms else "N/A"
+            entry["GO_Terms"] = "\n".join([f"{g['goId']}: {g['goName']}" for g in go_terms]) if go_terms else "N/A"
+
+# !TODO: go_cache also contains the ascepts like (BP, MF and CC) as "goAspect" add them to the excel too
 
         print("GO Term search is complete")
         return cds_values

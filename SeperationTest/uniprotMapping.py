@@ -1,30 +1,38 @@
-import requests, json, sys, time, os
+import requests
+import json
+import sys
+import time
+import os
 
 class UniprotMapping:
     
     BASE_URL = "https://rest.uniprot.org/idmapping/"
     
-    def __init__(self, chunkSize=500, maxRetries=3, cacheFile="UniToKegg.json"):
+    def __init__(self, chunkSize=500, maxRetries=3, cacheFile="UniToKegg.json", outDir="results"):
         self.chunkSize = chunkSize
         self.maxRetries = maxRetries
-        self.mappingDict = self.__load_cache()
         self.cacheFile = cacheFile
 
+        self.cachePath = os.path.join(outDir, self.cacheFile)
+        self.mappingDict = self.__load_cache()
+
     def __load_cache(self):
-        if os.path.exists(self.cacheFile):
+        self.cache_exists = False
+        if os.path.exists(self.cachePath):
             try:
-                with open(self.cacheFile, "r") as f:
+                with open(self.cachePath, "r") as f:
                     data = json.load(f)
-                print(f"[---Cache: Loaded {len(data)} mappings from {self.cacheFile}")
+                print(f"---Cache: Loaded {len(data)} mappings from {self.cachePath}")
+                self.cache_exists = True
                 return data
             except json.JSONDecodeError:
-                print(f"---Cache: cache file {self.cacheFile} is broken. Starting new")
+                print(f"---Cache: cache file in {self.cachePath} is broken. Starting new")
         return {}
 
     def __save_cache(self):
-        with open(self.cacheFile, "w") as f:
+        with open(self.cachePath, "w") as f:
             json.dump(self.mappingDict, f, indent=2)
-        print(f"[Cache] Saved {len(self.mappingDict)} total mappings to {self.cacheFile}")
+        print(f"[Cache] Saved {len(self.mappingDict)} total mappings to {self.cachePath}")
 
     def __submit_chunks(self, chunks, from_db="UniProtKB_AC-ID", to_db="KEGG"):
         
@@ -35,9 +43,9 @@ class UniprotMapping:
             "ids" : ",".join(chunks)
         }
         # {"jobId":"6QC3nJs0lv"}
-        response = requests.post(f"{self.BASE_URL}/run", data=bundle)
+        response = requests.post(f"{self.BASE_URL}run", data=bundle)
         response.raise_for_status()
-        jobID = response.json()["jobID"]
+        jobID = response.json()["jobId"]
 
         return jobID
     
@@ -101,34 +109,33 @@ class UniprotMapping:
         """
         new_ids = [uid for uid in uniProt_ids if uid not in self.mappingDict]
 
-        if not new_ids:
-            print("---Cache: No new id's to check")
+        if self.cache_exists:
+            # print("---Cache: Using cached mappings, skipping new fetch.")
             return self.mappingDict
+        else:
+            for i in range(0, len(new_ids), self.chunkSize):
+                bundle = new_ids[i:i+self.chunkSize]
+                if not bundle:
+                    continue
 
-        for i in range(0,len(new_ids), self.chunkSize):
-            bundle = new_ids[i:i+self.chunkSize]
-            if not bundle:
-                continue
+                print(f"Submitting bundle {i//self.chunkSize + 1}/{(len(new_ids) - 1 )//self.chunkSize} for mapping")
 
-            print(f"Submitting bundle {i//self.chunk_size + 1}/{(len(new_ids) - 1 )//self.chunk_size} for mapping")
-
-            for attempt in range(self.maxRetries):
-                try:
-                    job_id = self.__submit_chunks(chunks=bundle)
-                    job_status = self.__check_job_status(jobID=job_id)
-                    if job_status:
-                        self.__read_the_results(jobID=job_id)
-                        self.__save_cache()
-                    else:
-                        print(f"Job {job_id} failed or returned unexpected status. Skipping this chunk.", file=sys.stderr)
-                    break
-                except (requests.exceptions.RequestException, RuntimeError) as e:
-                    print(f"\nAttempt {attempt + 1}/{self.max_retries} failed: {e}", file=sys.stderr)
-                    if attempt + 1 == self.max_retries:
-                        print(f"--- Giving up on this chunk. ---", file=sys.stderr)
-                    else:
-                        delay = 2 ** attempt
-                        print(f"--- Retrying in {delay} seconds... ---")
-                        time.sleep(delay)
-            
+                for attempt in range(self.maxRetries):
+                    try:
+                        job_id = self.__submit_chunks(chunks=bundle)
+                        job_status = self.__check_job_status(jobID=job_id)
+                        if job_status:
+                            self.__read_the_results(jobID=job_id)
+                            self.__save_cache()
+                        else:
+                            print(f"Job {job_id} failed or returned unexpected status. Skipping this chunk.", file=sys.stderr)
+                        break
+                    except (requests.exceptions.RequestException, RuntimeError) as e:
+                        print(f"\nAttempt {attempt + 1}/{self.maxRetries} failed: {e}", file=sys.stderr)
+                        if attempt + 1 == self.maxRetries:
+                            print("--- Giving up on this chunk. ---", file=sys.stderr)
+                        else:
+                            delay = 2 ** attempt
+                            print(f"--- Retrying in {delay} seconds... ---")
+                            time.sleep(delay)
             return self.mappingDict

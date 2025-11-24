@@ -184,23 +184,24 @@ def run_pipeline(ref_path, fastq1, fastq2, out_dir="results", threads=4, prk_pre
     else:
         prkName, prk_path = prk_prefix, prokka_out
 
-    print("---Control: Starting parsing and GO Term finding")
+    # print("---Control: Starting parsing and GO Term finding")
     goTerms = UniprotGO(annPath=prk_path, prkName=prk_prefix)
     cds_values = goTerms.organize_GO()
-    print("---Control: Parsing and GO term finding ended")
+    # print("---Control: Parsing and GO term finding ended")
 
-    print("---Control: Turning UniProtIDs to KEGG IDs")
+    # print("---Control: Turning UniProtIDs to KEGG IDs")
     uniprotID = [entry["UniProt_ID"] for entry in cds_values if entry["UniProt_ID"]]
-    mapping = UniprotMapping()
+    mapping = UniprotMapping(outDir=out_dir)
     mapping_dict = mapping.organize_Mapping(uniProt_ids=uniprotID)
     
     for entry in cds_values:
         uid = entry.get("UniProt_ID")
         entry["KEGG_ID"] = mapping_dict.get(uid)
 
-    print("---Control: Get the pathway and the linked info from KEGG")
+    # print("---Control: Get the pathway and the linked info from KEGG")
+    
     # We need to run keggAPI for every seperated value, for loop can be run either in here or in KeggAPI
-    keggRequests = KeggAPI(cdsValues=cds_values)
+    keggRequests = KeggAPI(cdsValues=cds_values,outDir=out_dir)
 
     for i, keggID in enumerate(cds_values, 1):
         kID = entry.get("KEGG_ID")
@@ -223,7 +224,7 @@ def run_pipeline(ref_path, fastq1, fastq2, out_dir="results", threads=4, prk_pre
             print(f"[{i}] No KEGG data found for {kID}")
 
     print("---Control: Create the excel file")
-    export_to_excel(cds_values, output_path="annotation_results.xlsx")
+    export_to_excel(cds_values, output_path=excel_file)
 
 
 if __name__ == "__main__":
