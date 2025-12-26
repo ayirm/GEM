@@ -1,0 +1,70 @@
+repository_type: pipeline
+
+nf_core_version: 3.5.1
+
+lint:
+  files_unchanged:
+    - CODE_OF_CONDUCT.md
+    - assets/nf-core-model_creation_logo_light.png
+    - docs/images/nf-core-model_creation_logo_light.png
+    - docs/images/nf-core-model_creation_logo_dark.png
+    - .github/ISSUE_TEMPLATE/bug_report.yml
+    - .github/CONTRIBUTING.md
+    - .github/PULL_REQUEST_TEMPLATE.md
+    - assets/email_template.txt
+    - docs/README.md
+    - .github/ISSUE_TEMPLATE/bug_report.yml
+    - .github/ISSUE_TEMPLATE/config.yml
+    - .github/ISSUE_TEMPLATE/feature_request.yml
+    - .github/PULL_REQUEST_TEMPLATE.md
+    - .github/workflows/branch.yml
+    - .github/workflows/linting_comment.yml
+    - .github/workflows/linting.yml
+    - .github/CONTRIBUTING.md
+    - .github/.dockstore.yml
+    - .github/CONTRIBUTING.md
+    - .github/PULL_REQUEST_TEMPLATE.md
+    - .github/CONTRIBUTING.md
+    - LICENSE
+  nextflow_config: false
+  multiqc_config:
+    - report_comment
+  files_exist:
+    - CODE_OF_CONDUCT.md
+    - assets/nf-core-model_creation_logo_light.png
+    - docs/images/nf-core-model_creation_logo_light.png
+    - docs/images/nf-core-model_creation_logo_dark.png
+    - .github/ISSUE_TEMPLATE/config.yml
+    - .github/workflows/awstest.yml
+    - .github/workflows/awsfulltest.yml
+    - .github/ISSUE_TEMPLATE/bug_report.yml
+    - .github/ISSUE_TEMPLATE/feature_request.yml
+    - .github/PULL_REQUEST_TEMPLATE.md
+    - .github/CONTRIBUTING.md
+    - .github/.dockstore.yml
+    - conf/test.config
+    - conf/test_full.config
+    - .github/workflows/nf-test.yml
+    - .github/actions/get-shards/action.yml
+    - .github/actions/nf-test/action.yml
+    - LICENSE
+  readme:
+    - nextflow_badge
+
+template:
+  org: iumobg
+  name: model_creation
+  description: Generates a CobraPy model from fastq files and then simulates this
+    model according to reaction and maximize/minimize input
+  author: "Doga Yasemen Testere, \u0130rem Ay"
+  version: 1.0.0dev
+  force: true
+  outdir: .
+  skip_features:
+    - github
+    - license
+    - test_config
+    - seqera_platform
+    - gpu
+    - codespaces
+  is_nfcore: false
