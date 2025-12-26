@@ -14,42 +14,41 @@
 
 ## Introduction
 
-**iumobg/model_creation** is a bioinformatics pipeline that ...
-
-<!-- TODO nf-core:
-   Complete this sentence with a 2-3 sentence summary of what types of data the pipeline ingests, a brief overview of the
-   major pipeline sections and the types of output it produces. You're giving an overview to someone new
-   to nf-core here, in 15-20 seconds. For an example, see https://github.com/nf-core/rnaseq/blob/master/README.md#introduction
--->
+**iumobg/model_creation** is a bioinformatics pipeline that converts raw FASTQ sequencing reads into a genome-scale metabolic model (GEM) and performs constraint-based simulations. The full pipeline conducts quality control, genome assembly(de novo or reference-guided) and annotation then integrates UniProt, GO and KEGG information to construct a CobraPy model.
 
 <!-- TODO nf-core: Include a figure that guides the user through the major workflow steps. Many nf-core
      workflows use the "tube map" design for that. See https://nf-co.re/docs/guidelines/graphic_design/workflow_diagrams#examples for examples.   -->
-<!-- TODO nf-core: Fill in short bullet-pointed list of the default steps in the pipeline -->1. Read QC ([`FastQC`](https://www.bioinformatics.babraham.ac.uk/projects/fastqc/))2. Present QC for raw reads ([`MultiQC`](http://multiqc.info/))
+
+1. Read QC ([`FastQC`](https://www.bioinformatics.babraham.ac.uk/projects/fastqc/))
+2. Adapter trimming ([`Cutadapt`](https://cutadapt.readthedocs.io/en/stable/))
+3. De Novo Assembly ([`SPAdes`](https://github.com/ablab/spades))
+4. Reference-guided assembly ([`Bowtie2`](https://bowtie-bio.sourceforge.net/bowtie2/)), ([`SAMtools`](https://www.htslib.org/)) and ([`BCFtools`](https://samtools.github.io/bcftools/))
+5. Annotation ([`Bakta`](https://bakta.readthedocs.io/)) and ([`Prodigal`](https://github.com/hyattpd/Prodigal))
+6. Custom python scripts using Biopython, openpyxl, bioservices
 
 ## Usage
 
 > [!NOTE]
 > If you are new to Nextflow and nf-core, please refer to [this page](https://nf-co.re/docs/usage/installation) on how to set-up Nextflow. 
 
-<!-- TODO nf-core: Describe the minimum required steps to execute the pipeline, e.g. how to prepare samplesheets.
-     Explain what rows and columns represent. For instance (please edit as appropriate):
-
 First, prepare a samplesheet with your input data that looks as follows:
-
 `samplesheet.csv`:
 
 ```csv
-sample,fastq_1,fastq_2
-CONTROL_REP1,AEG588A1_S1_L002_R1_001.fastq.gz,AEG588A1_S1_L002_R2_001.fastq.gz
+sample,fastq_1,fastq_2,RXN_ID,max_min
+CONTROL_REP1,AEG588A1_S1_L002_R1_001.fastq.gz,AEG588A1_S1_L002_R2_001.fastq.gz,R02738,min
 ```
-
-Each row represents a fastq file (single-end) or a pair of fastq files (paired end).
-
--->
+Each row represents one biological sample.
+The columns are defined as follows:
+- `sample`: Unique sample identifier
+- `fastq_1`: FASTQ file for single-end reads or read 1 for paired-end data
+- `fastq_2`: FASTQ file for read 2 (leave empty for single-end data)
+- `RXN_ID`: KEGG reaction ID to be optimized in the metabolic model
+- `max_min`: Specify whether the reaction should be maximized or minimized
+> [!NOTE]
+> An optional reference genome (ref_genome) can be added as an additional column when performing reference-guided assembly.
 
 Now, you can run the pipeline using:
-
-<!-- TODO nf-core: update the following command to include all required parameters for a minimal example -->
 
 ```bash
 nextflow run iumobg/model_creation \
