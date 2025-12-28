@@ -77,7 +77,7 @@ class idMapping:
             data = response.json()
 
             for item in data.get("results", []):
-                self.mappingData[item["from"]] = item["to"]
+                self.mapping_data[item["from"]] = item["to"]
 
             # Check if there's a next page
             if "next" in response.links:
@@ -117,7 +117,7 @@ class idMapping:
         for i in range(0, len(uniprot_ids), self.chunkSize):
             self.__run_with_retries(uniprot_ids[i:i + self.chunkSize])
 
-        self.__save_mapping()
+        self.__mapping_save()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
