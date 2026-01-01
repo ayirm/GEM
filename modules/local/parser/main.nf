@@ -1,4 +1,4 @@
-process GO_TERM_FINDER {
+process GB_PARSER {
     tag "${meta.id}"
     label 'process_low'
 
@@ -8,17 +8,17 @@ process GO_TERM_FINDER {
         'python:3.11.9' }"
 
     input:
-    tuple val(meta), path(parsed_gbk)
+    tuple val(meta), path(gb_file)
     path(python_script)
 
     output:
-    tuple val(meta), path("*_go_terms.json"), emit: go_terms
+    tuple val(meta), path("*_parsed_gb.json"), emit: parsing
     path "versions.yml", emit: versions
 
     script:
     """
     python3 ${python_script} \
-        --input_json ${parsed_gbk} \
-        --go_json ${meta.id}_go_terms.json
+        --gb_file ${gb_file} \
+        --parser_json ${meta.id}_parsed_gb.json
     """
 }

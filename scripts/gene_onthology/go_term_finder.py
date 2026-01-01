@@ -1,20 +1,47 @@
-import os
+#!/usr/bin/env python3
+
+import sys
 import json
 import tqdm
 import argparse
 
+from datetime import datetime, timezone
 from bioservices import QuickGO
 
-class goTermFinder():
-    def __init__(self, gbk_json, out_loc=".", go_json="go_terms.json"):
-        self.gbk_json = gbk_json
+def extract_uniprot_ids(parsed_json):
+    """
+    Extract unique UniProt IDs from parsed GBK JSON.
+    """
+    return {
+        entry["UniProt_ID"]
+        for entry in parsed_json
+        if entry.get("UniProt_ID")
+    }
 
-        self.go_json = os.path.join(out_loc, go_json)
-        self.go_data = {}
-        self.go = QuickGO()
 
-    def __term_save(self):
-        """
+def fetch_go_terms(uniprot_ids):
+    """
+    Uses QuickGO from bioservices to get go names and go aspects from each uniprot id
+    """
+    go = QuickGO()
+    go_data = {}
+
+    for uid in tqdm.tqdm(uniprot_ids, desc="Fetching GO Terms"):
+        try:
+            response = go.Annotation(
+                geneProductId=uid,
+                includeFields="goName,goAspect"
+            )
+            go_data[uid] = response.get("results", [])
+        except Exception as e:
+            sys.stderr.write(f"GO error for {uid}: {e}\n")
+            go_data[uid] = []
+
+    return go_data
+
+
+def write_json(data, output_path):
+    """
         Saves the term finding results as a json. Structure is this: \n
         {
             "P00561": [
@@ -39,54 +66,40 @@ class goTermFinder():
                     "synonyms": null,
                     "name": null
                 },
-        """
-        try:
-            with open(self.go_json, "w") as file:
-                json.dump(self.go_data, file, indent=2)
-            print("---Json(GoTerms) Success")
-        except Exception as e:
-            print(f"---Json(GoTerms) Error: \n {e}")
+    """
+    with open(output_path, "w") as f:
+        json.dump(data, f, indent=2)
 
-    def __find_go_terms(self, json_file):
-        uniProtIDs = {
-            entry["UniProt_ID"]
-            for entry in json_file
-            if entry.get("UniProt_ID")
+def write_versions():
+    versions = {
+        "json_merging": {
+            "python": sys.version.split()[0],
+            "timestamp": datetime.now(timezone.utc).isoformat()
         }
+    }
 
-        for uid in tqdm.tqdm(uniProtIDs, desc="Fetching GO Terms"):
-            try:
-                response = self.go.Annotation(
-                    geneProductId=uid,
-                    includeFields="goName,goAspect"
-                )
-                self.go_data[uid] = response.get("results", [])
-            except Exception as e:
-                print(f"---GoError: {uid}\n{e}")
-                self.go_data[uid] = []
+    with open("versions.yml", "w") as f:
+        json.dump(versions, f, indent=2)
 
-    def goFinder(self):
-        self.__find_go_terms(self.gbk_json)
-        self.__term_save()
-        return self.gbk_json
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
+def main():
+    parser = argparse.ArgumentParser(
+        description="Fetch GO terms for UniProt IDs from parsed GenBank JSON"
+    )
     parser.add_argument("--input_json", required=True)
     parser.add_argument("--go_json", required=True)
 
     args = parser.parse_args()
 
     with open(args.input_json) as f:
-        gbk_json = json.load(f)
+        parsed_gbk = json.load(f)
 
-    termFinder = goTermFinder(
-        gbk_json=gbk_json,
-        out_loc=".",
-        go_json=args.go_json
-    )
+    uniprot_ids = extract_uniprot_ids(parsed_gbk)
+    go_data = fetch_go_terms(uniprot_ids)
 
-    termFinder.goFinder()
+    write_json(go_data, args.go_json)
 
-    with open("versions.yml", "w") as f:
-        f.write("go_term_finding: 1.0\n")
+    write_versions()
+
+
+if __name__ == "__main__":
+    main()

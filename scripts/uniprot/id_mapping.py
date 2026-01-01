@@ -1,23 +1,17 @@
+#!/usr/bin/env python3
+
 import json
 import requests
-import os
 import sys
 import time
 import argparse
 
-class idMapping:
-    def __init__(self, gbk_json, chunkSize=500, out_loc= ".", maxRetries=3, mapping_json="KEGG_mapping.json"):
-        self.chunkSize = chunkSize
-        self.maxRetries = maxRetries
-        self.gbk_json = gbk_json
+from datetime import datetime, timezone
 
-        self.mapping_json = os.path.join(out_loc, mapping_json)
-        self.mapping_data = {}
+BASE_URL = "https://rest.uniprot.org/idmapping/"
 
-    BASE_URL = "https://rest.uniprot.org/idmapping/"
-
-    def __mapping_save(self):
-        """
+def save_mapping(mapping_data, out_path):
+    """
         Saves the mapping as a json, this is then passed to other nextflow processes \n
         Structure of json: \n
         {
@@ -25,118 +19,146 @@ class idMapping:
         "P0A8I3": "ecj:JW0005",
         "Q45068": "bsu:BSU18120",
         }
-        """
-        try:
-            with open(self.mapping_json, "w") as file:
-                json.dump(self.mapping_data, file, indent=2)
-            print(f"---Json(Mapping) Success: File in {self.mapping_json}, total mappings: {len(self.mapping_data)}")
-        except Exception as e:
-            print(f"---Json(Mapping) Error: {e}")
-    
-    def __submitting_job(self, chunks, fromDB="UniProtKB_AC-ID", toDB="KEGG"):
-        # curl -X POST "https://rest.uniprot.org/idmapping/run" -d "from=UniProtKB_AC-ID" -d "to=KEGG" -d "ids=P00561"
-        # {"jobId":"6QC3nJs0lv"}
-        payload = {
-            "from": fromDB,
-            "to": toDB,
-            "ids": ",".join(chunks)
-        }
+    """
+    try:
+        with open(out_path, "w") as fh:
+            json.dump(mapping_data, fh, indent=2)
+        print(f"---Json(Mapping) Success: File in {out_path}, total mappings: {len(mapping_data)}")
+    except Exception as e:
+        raise RuntimeError(f"Failed to write mapping JSON: {e}")
 
-        response = requests.post(f"{self.BASE_URL}run", data=payload, timeout=30)
+def submit_job(chunks, from_db="UniProtKB_AC-ID", to_db="KEGG"):
+    # curl -X POST "https://rest.uniprot.org/idmapping/run" -d "from=UniProtKB_AC-ID" -d "to=KEGG" -d "ids=P00561"
+    # {"jobId":"6QC3nJs0lv"}
+    payload = {
+        "from": from_db,
+        "to": to_db,
+        "ids": ",".join(chunks),
+    }
+
+    response = requests.post(f"{BASE_URL}run", data=payload, timeout=30)
+    response.raise_for_status()
+    return response.json()["jobId"]
+
+def wait_for_job(job_id):
+    # curl "https://rest.uniprot.org/idmapping/status/6QC3nJs0lv"
+    # {"jobStatus":"FINISHED"}
+    while True:
+        response = requests.get(f"{BASE_URL}status/{job_id}", timeout=30)
+
+        if response.status_code == 404:
+            time.sleep(5)
+            continue
+
         response.raise_for_status()
-        return response.json()["jobId"]
-    
-    def __checking_job(self, jobID):
-        # curl "https://rest.uniprot.org/idmapping/status/6QC3nJs0lv"
-        # {"jobStatus":"FINISHED"}
-        while True:
-            response = requests.get(f"{self.BASE_URL}status/{jobID}", timeout=30)
+        status = response.json()
 
-            if response.status_code == 404:
-                time.sleep(5)
-                continue
+        if status.get("jobStatus") == "FINISHED" or "results" in status:
+            return
+        elif status.get("jobStatus") in ("RUNNING", "QUEUED"):
+            time.sleep(2)
+        else:
+            raise RuntimeError(f"Unexpected job status: {status}")
 
-            response.raise_for_status()
-            status = response.json()
 
-            if status.get("jobStatus") == "FINISHED" or "results" in status:
-                return
-            elif status.get("jobStatus") in ("RUNNING", "QUEUED"):
-                time.sleep(2)
-            else:
-                raise RuntimeError(f"Unexpected job status: {status}")
-    
-    def __getting_results(self, jobID):
-        resultsUrl = f"{self.BASE_URL}results/{jobID}"
-        page = 1
+def fetch_results(job_id, mapping_data):
+    results_url = f"{BASE_URL}results/{job_id}"
+    page = 1
 
-        while resultsUrl:
-            response = requests.get(resultsUrl,timeout=30)
-            response.raise_for_status()
+    while results_url:
+        response = requests.get(results_url, timeout=30)
+        response.raise_for_status()
+        data = response.json()
 
-            data = response.json()
+        for item in data.get("results", []):
+            mapping_data[item["from"]] = item["to"]
 
-            for item in data.get("results", []):
-                self.mapping_data[item["from"]] = item["to"]
+        # Check if there's a next page
+        if "next" in response.links:
+            results_url = response.links["next"]["url"]
+            page += 1
+            sys.stdout.write(f"\rFetching results page {page}...")
+            sys.stdout.flush()
+        else:
+            results_url = None
+            sys.stdout.write("\n")
+            sys.stdout.flush()
 
-            # Check if there's a next page
-            if "next" in response.links:
-                resultsUrl = response.links["next"]["url"]
-                page += 1
-                sys.stdout.write(f"\rFetching results page {page}...")
-                sys.stdout.flush()
-            else:
-                resultsUrl = None
-                sys.stdout.write("\n")
-                sys.stdout.flush()
 
-    def __run_with_retries(self, bundle):
-        for attempt in range(1, self.maxRetries + 1):
-            try:
-                jobID = self.__submitting_job(bundle)
-                self.__checking_job(jobID)
-                self.__getting_results(jobID)
-                return 
-            except (requests.exceptions.RequestException, RuntimeError) as e:
-                if attempt == self.maxRetries:
-                    raise RuntimeError(f"Mapping failed after {self.maxRetries} attempts: {e}")
-                sleep_time = 2 ** (attempt - 1)
-                print(f"Retry {attempt}/{self.maxRetries} in {sleep_time}s", file=sys.stderr)
-                time.sleep(sleep_time)
+def run_with_retries(bundle, mapping_data, max_retries):
+    for attempt in range(1, max_retries + 1):
+        try:
+            job_id = submit_job(bundle)
+            wait_for_job(job_id)
+            fetch_results(job_id, mapping_data)
+            return
+        except (requests.exceptions.RequestException, RuntimeError) as e:
+            if attempt == max_retries:
+                raise RuntimeError(
+                    f"Mapping failed after {max_retries} attempts: {e}"
+                )
+            sleep_time = 2 ** (attempt - 1)
+            print(
+                f"Retry {attempt}/{max_retries} in {sleep_time}s",
+                file=sys.stderr,
+            )
+            time.sleep(sleep_time)
 
-    def idMapper(self):
-        uniprot_ids = sorted({
-            entry["UniProt_ID"]
-            for entry in self.gbk_json
-            if entry.get("UniProt_ID")
-        })
 
-        if not uniprot_ids:
-            raise RuntimeError("No UniProt IDs found in input JSON")
+def run_id_mapping(gbk_json, out_path, chunk_size=500, max_retries=3):
+    uniprot_ids = sorted({
+        entry["UniProt_ID"]
+        for entry in gbk_json
+        if entry.get("UniProt_ID")
+    })
 
-        for i in range(0, len(uniprot_ids), self.chunkSize):
-            self.__run_with_retries(uniprot_ids[i:i + self.chunkSize])
+    if not uniprot_ids:
+        raise RuntimeError("No UniProt IDs found in input JSON")
 
-        self.__mapping_save()
+    mapping_data = {}
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--parse_json", required=True)
-    parser.add_argument("--mapping_json", required=True)
-    args = parser.parse_args()
+    for i in range(0, len(uniprot_ids), chunk_size):
+        run_with_retries(
+            uniprot_ids[i:i + chunk_size],
+            mapping_data,
+            max_retries,
+        )
 
-    with open(args.parse_json) as f:
-        gbk_json = json.load(f)
+    save_mapping(mapping_data, out_path)
 
-    mapper = idMapping(
-        gbk_json=gbk_json,
-        out_loc=".",
-        chunkSize=500,
-        maxRetries=3,
-        mapping_json=args.mapping_json
-    )
-
-    mapper.idMapper()
+def write_versions():
+    versions = {
+        "json_merging": {
+            "python": sys.version.split()[0],
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }
+    }
 
     with open("versions.yml", "w") as f:
-        f.write("uniprot_mapping: 1.0\n")
+        json.dump(versions, f, indent=2)
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Map UniProt IDs to KEGG IDs using UniProt REST API"
+    )
+    parser.add_argument("--parse_json", required=True)
+    parser.add_argument("--mapping_json", required=True)
+    parser.add_argument("--chunk_size", type=int, default=500)
+    parser.add_argument("--max_retries",type=int, default=3)
+    args = parser.parse_args()
+
+    with open(args.parse_json) as fh:
+        gbk_json = json.load(fh)
+
+    run_id_mapping(
+        gbk_json=gbk_json,
+        out_path=args.mapping_json,
+        chunk_size=args.chunk_size,
+        max_retries=args.max_retries,
+    )
+
+    write_versions()
+
+
+if __name__ == "__main__":
+    main()
