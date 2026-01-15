@@ -37,5 +37,5 @@ workflow WEB_REQUESTS {
     merged_json = JSON_MERGING(gbk_ch, mapping_json, go_json, kegg_json, json_merging_script) 
 
   emit:
-    merged_json // This goes to modelling workflow
+    merged_json  // This goes to modelling workflow
 }
