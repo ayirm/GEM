@@ -157,20 +157,74 @@ def find_compounds(reactionPage):
 
     Then sends them back as equation(DEFINITION) and cmpd_id(EQUATION)
     """
-
     if not reactionPage:
         return {
-            "equation" : "N/A(ERROR)",
-            "cmpdID" : "N/A(ERROR)"
+            "equation": "N/A(ERROR)",
+            "cmpdID": [],
         }
-        
+
     readableEQ = " ".join(parse_page_entries(reactionPage, "DEFINITION"))
     cmpdEQ = " ".join(parse_page_entries(reactionPage, "EQUATION"))
 
+    # Extract compound IDs like C00002
+    cmpd_ids = re.findall(r"C\d{5}", cmpdEQ)
+
     return {
-        "equation" : readableEQ if readableEQ else "N/A",
-        "cmpdID" : cmpdEQ if cmpdEQ else "N/A"
+        "equation": readableEQ if readableEQ else "N/A",
+        "cmpdID": list(set(cmpd_ids)),
     }
+
+
+def populate_kegg_compound(compound_id):
+    """
+    Fetch KEGG compound entry (Cxxxxx) and extract model-relevant fields.
+    FORMULA     C4H9NO3
+    EXACT_MASS  119.0582
+    MOL_WEIGHT  119.12
+    DBLINKS     CAS: 672-15-1
+            PubChem: 3561
+            ChEBI: 15699
+            KNApSAcK: C00001366
+            PDB-CCD: HSE
+            NIKKAJI: J9.199E
+    """
+    page = kegg_request(f"/get/{compound_id}")
+    if not page:
+        return None
+
+    formula = None
+    exact_mass = None
+    mol_weight = None
+    dblinks = {}
+
+    for line in page.splitlines():
+        if line.startswith("FORMULA"):
+            formula = line.replace("FORMULA", "").strip()
+
+        elif line.startswith("EXACT_MASS"):
+            exact_mass = line.replace("EXACT_MASS", "").strip()
+
+        elif line.startswith("MOL_WEIGHT"):
+            mol_weight = line.replace("MOL_WEIGHT", "").strip()
+
+        elif line.startswith("DBLINKS"):
+            # DBLINKS can span multiple indented lines
+            current = line.replace("DBLINKS", "").strip()
+            if current:
+                key, val = current.split(":", 1)
+                dblinks[key.strip()] = val.strip()
+
+        elif line.startswith(" " * 12) and ":" in line and dblinks:
+            key, val = line.strip().split(":", 1)
+            dblinks[key.strip()] = val.strip()
+
+    return {
+        "formula": formula,
+        "exact_mass": exact_mass,
+        "molecular_weight": mol_weight,
+        "dblinks": dblinks
+    }
+
 
 def fetch_kegg_entry(kegg_id):
     result = {
@@ -217,9 +271,17 @@ def fetch_kegg_entry(kegg_id):
         result["reactions"][p] = rxns
         reactions.update(rxns)
 
+    compound_cache = {}
+
     for rn in reactions:
         rpage = kegg_request(f"/get/{rn}")
-        result["compounds"][rn] = find_compounds(rpage)
+        rxn_data = find_compounds(rpage)
+        result["compounds"][rn] = rxn_data
+
+        for cid in rxn_data.get("cmpdID", []):
+            if cid not in compound_cache:
+                compound_cache[cid] = populate_kegg_compound(cid)
+    result["compound_metadata"] = compound_cache
 
     return result
 

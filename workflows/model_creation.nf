@@ -5,6 +5,9 @@
 */
 include { FASTQC                 } from '../modules/nf-core/fastqc/main'
 include { MULTIQC                } from '../modules/nf-core/multiqc/main'
+include { SPADES                 } from "../modules/nf-core/spades"
+include { PROKKA                 } from '../modules/nf-core/prokka/main' 
+
 include { paramsSummaryMap       } from 'plugin/nf-schema'
 include { paramsSummaryMultiqc   } from '../subworkflows/nf-core/utils_nfcore_pipeline'
 include { softwareVersionsToYAML } from '../subworkflows/nf-core/utils_nfcore_pipeline'
@@ -25,20 +28,32 @@ workflow MODEL_CREATION {
     take:
     ch_samplesheet // channel: samplesheet read in from --input
 
-    // samplesheet values
-    // sample, fastq_1, fastq_2,RXN_ID,max_min, (optional)ref_genome
-    // We mainly need to pass fastq_1 and _2 around until we get the full json file for model construction
-    // after model is created and ready to test, we pass the RXN_ID and max_min values
     main:
+    ch_reads = ch_samplesheet
+        .map { meta, fastqs ->
+            def m = meta instanceof Map ? meta : [:]
+            // normalize keys coming from samplesheet plugin (e.g. 'RXN_ID' -> 'rxn_id')
+            if (!m.containsKey('rxn_id') && m.containsKey('RXN_ID')) m.rxn_id = m['RXN_ID']
+            if (!m.containsKey('max_min') && m.containsKey('MAX_MIN')) m.max_min = m['MAX_MIN']
+            if (!m.containsKey('sample') && m.containsKey('id')) m.sample = m.id
+            if (!m.containsKey('has_ref')) m.has_ref = false
+            if (!m.containsKey('single_end')) m.single_end = false
+
+            tuple(m, fastqs.collect { file(it) })
+        }
 
     ch_versions = channel.empty()
     ch_multiqc_files = channel.empty()
+
     //
     // MODULE: Run FastQC
     //
-    FASTQC (
-        ch_samplesheet
+    FASTQC(
+        ch_reads.map { meta, reads ->
+            tuple(meta, reads)
+        }
     )
+
     ch_multiqc_files = ch_multiqc_files.mix(FASTQC.out.zip.collect{it[1]})
     ch_versions = ch_versions.mix(FASTQC.out.versions.first())
 
@@ -46,20 +61,36 @@ workflow MODEL_CREATION {
     // MODULE: Spades Assembly 
     // if there is no reference flag
 
-    // !TODO: Add it here after downloading the module from nf-core
+    ch_de_novo = ch_reads.filter { meta, reads -> !meta.has_ref }
+    
+    SPADES(
+        ch_de_novo.map { meta, reads ->
+            tuple(meta, reads)
+        }
+    )
 
     //
     // WORKFLOW : Reference Assembly 
     // Should have bowtie_indexing --> bowtie_alignemnt --> samtools_sort --> samtools_index --> bcftools_call --> bcftools_index --> bcftools_concensus
 
+    ch_reference = ch_reads.filter { meta, reads -> meta.has_ref }
+
     // !TODO : Add it here after downloading it from nf-core
+
+    //
+    // MODULE: Prokka Annotation
+    //
+
+    PROKKA(
+        SPADES.out.contigs
+    )
 
     // 
     // MODULE : Genbank file parsing
     // 
 
     GB_PARSER(
-        assembly_output, // tuple val(meta), path(genbank_file)
+        PROKKA.out.gbk, // tuple val(meta), path(genbank_file)
         file(params.parser_script)
     )
     ch_multiqc_files = ch_multiqc_files.mix(GB_PARSER.out.parsing.collect{it[1]})

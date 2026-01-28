@@ -27,6 +27,19 @@
                 "pattern": "^([\\S\\s]*\\/)?[^\\s\\/]+\\.f(ast)?q\\.gz$",
                 "errorMessage": "FastQ file for reads 2 cannot contain spaces and must have extension '.fq.gz' or '.fastq.gz'"
             }
+            ,
+            "RXN_ID": {
+                "type": "string",
+                "pattern": "^\\S+$",
+                "errorMessage": "RXN_ID must be provided and cannot contain spaces",
+                "meta": ["rxn_id"]
+            },
+            "max_min": {
+                "type": "string",
+                "enum": ["max","min"],
+                "errorMessage": "max_min must be either 'max' or 'min'",
+                "meta": ["max_min"]
+            }
         },
         "required": ["sample", "fastq_1"]
     }

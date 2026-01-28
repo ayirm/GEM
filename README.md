@@ -64,10 +64,6 @@ nextflow run iumobg/model_creation \
 
 iumobg/model_creation was originally written by Doga Yasemen Testere, İrem Ay.
 
-We thank the following people for their extensive assistance in the development of this pipeline:
-
-<!-- TODO nf-core: If applicable, make list of people who have also contributed -->
-
 ## Contributions and Support
 
 If you would like to contribute to this pipeline, please see the [contributing guidelines](.github/CONTRIBUTING.md).

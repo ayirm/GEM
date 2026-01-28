@@ -23,19 +23,19 @@ workflow WEB_REQUESTS {
     gbk_ch // tuple val(meta), path(gbk_json)
 
   main:
-    mapping_script = params.mapping_script
-    mapping_json = UNIPROT_MAPPING(gbk_ch, mapping_script) // tuple val(meta), path(mapping_json) also version.yml
+    mapping_script = channel.fromPath(params.mapping_script)
+    UNIPROT_MAPPING(gbk_ch, mapping_script) // tuple val(meta), path(mapping_json) also version.yml
 
-    goTerms_script = params.goTerms_script
-    go_json = GO_TERM_FINDER(gbk_ch, goTerms_script)
+    goTerm_script = channel.fromPath(params.goTerm_script)
+    GO_TERM_FINDER(gbk_ch, goTerm_script)
 
-    kegg_requests_script = params.kegg_requests_script
-    kegg_json = KEGG_REQUESTS(mapping_json, kegg_requests_script)
+    kegg_requests_script = channel.fromPath(params.kegg_requests_script)
+    KEGG_REQUESTS(UNIPROT_MAPPING.out.mapping, kegg_requests_script)
 
-    json_merging_script = params.json_merging_script
-    // TODO: This could result in an error since all the process channels also return a meta id, just double check it
-    merged_json = JSON_MERGING(gbk_ch, mapping_json, go_json, kegg_json, json_merging_script) 
+    json_merging_script = channel.fromPath(params.json_merging_script)
+    JSON_MERGING(gbk_ch, UNIPROT_MAPPING.out.mapping, GO_TERM_FINDER.out.go_terms, KEGG_REQUESTS.out.kegg, json_merging_script) 
 
   emit:
-    merged_json  // This goes to modelling workflow
+    merged_json = JSON_MERGING.out.merged
+    versions    = JSON_MERGING.out.versions
 }

@@ -8,9 +8,9 @@ process SPADES {
         'community.wave.seqera.io/library/spades:4.1.0--77799c52e1d1054a' }"
 
     input:
-    tuple val(meta), path(illumina), path(pacbio), path(nanopore)
-    path yml
-    path hmm
+    tuple val(meta), path(reads)
+    //path yml 
+    //path hmm 
 
     output:
     tuple val(meta), path('*.scaffolds.fa.gz')    , optional:true, emit: scaffolds
@@ -29,19 +29,20 @@ process SPADES {
     def args = task.ext.args ?: ''
     def prefix = task.ext.prefix ?: "${meta.id}"
     def maxmem = task.memory.toGiga()
-    def illumina_reads = illumina ? ( meta.single_end ? "-s $illumina" : "-1 ${illumina[0]} -2 ${illumina[1]}" ) : ""
-    def pacbio_reads = pacbio ? "--pacbio $pacbio" : ""
-    def nanopore_reads = nanopore ? "--nanopore $nanopore" : ""
-    def custom_hmms = hmm ? "--custom-hmms $hmm" : ""
-    def reads = yml ? "--dataset $yml" : "$illumina_reads $pacbio_reads $nanopore_reads"
+    def illumina_reads = meta.single_end \
+        ? "-s ${reads[0]}" \
+        : "-1 ${reads[0]} -2 ${reads[1]}"
+    def reads_args = illumina_reads
+    //def custom_hmms = hmm ? "--custom-hmms $hmm" : ""
+    //def reads = yml ? "--dataset $yml" : "$illumina_reads $pacbio_reads $nanopore_reads"
     """
     spades.py \\
-        $args \\
-        --threads $task.cpus \\
-        --memory $maxmem \\
-        $custom_hmms \\
-        $reads \\
+        $args \
+        --threads $task.cpus \
+        --memory $maxmem \
+        $reads \
         -o ./
+
     mv spades.log ${prefix}.spades.log
 
     if [ -f scaffolds.fasta ]; then
