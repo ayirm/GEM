@@ -18,6 +18,14 @@ include { PIPELINE_INITIALISATION } from './subworkflows/local/utils_nfcore_mode
 include { PIPELINE_COMPLETION      } from './subworkflows/local/utils_nfcore_model_creation_pipeline'
 include { getGenomeAttribute      } from './subworkflows/local/utils_nfcore_model_creation_pipeline'
 
+nextflow.enable.dsl=2
+
+// Modülleri projeye dahil ediyoruz
+include { SPADES          } from './modules/nf-core/spades/main'
+include { SAMTOOLS_SORT   } from './modules/nf-core/samtools/sort/main'
+include { SAMTOOLS_INDEX  } from './modules/nf-core/samtools/index/main'
+// Kendi yazdığın veya nf-core'dan indirdiğin Prokka:
+include { PROKKA          } from './modules/nf-core/prokka/main'
 // --- SENİN MATRİS SUBWORKFLOW'UN BURADA ---
 include { MATRIX_GENERATION_WF } from './subworkflows/nf-core/matrix/matrix_wf.nf'
 
