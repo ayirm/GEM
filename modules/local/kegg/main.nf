@@ -5,7 +5,7 @@ process KEGG_REQUESTS {
     conda "${moduleDir}/environment.yaml"
     container "${ workflow.containerEngine == 'singularity' && !task.ext.singularity_pull_docker_container ?
         'https://depot.galaxyproject.org/singularity/python:3.11.9' :
-        'python:3.11.9' }"
+        'docker.io/dogay/kegg-requests:3.11' }"
 
     input:
     tuple val(meta), path(mapping_json)

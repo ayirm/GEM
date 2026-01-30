@@ -27,9 +27,11 @@ def fetch_go_terms(uniprot_ids):
     go_data = {}
 
     for uid in tqdm.tqdm(uniprot_ids, desc="Fetching GO Terms"):
+        # QuickGO expects a namespaced geneProductId like 'UniProtKB:P00561'
+        gp_id = uid if str(uid).startswith("UniProtKB:") else f"UniProtKB:{uid}"
         try:
             response = go.Annotation(
-                geneProductId=uid,
+                geneProductId=gp_id,
                 includeFields="goName,goAspect"
             )
             go_data[uid] = response.get("results", [])

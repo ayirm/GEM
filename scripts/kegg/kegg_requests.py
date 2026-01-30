@@ -4,7 +4,7 @@ import time
 import requests
 import sys
 import json
-import tqdm
+from tqdm import tqdm
 import argparse
 import re
 import os

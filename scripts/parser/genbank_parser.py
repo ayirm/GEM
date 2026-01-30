@@ -3,13 +3,39 @@
 import argparse
 import json
 import sys
+import tempfile
+import re
 
 from datetime import datetime, timezone
 from Bio import SeqIO
 
+def sanitize_genbank(in_path):
+    """
+    Fix non-standard LOCUS lines so Biopython can parse them.
+    """
+    fixed_lines = []
+    with open(in_path, "r") as f:
+        for line in f:
+            if line.startswith("LOCUS"):
+                # extract locus name (first non-space token after LOCUS)
+                m_locus = re.match(r"LOCUS\s+(\S+)", line)
+                locus = m_locus.group(1) if m_locus else "UNKNOWN"
+                # try to find a bp length (digits before 'bp'), otherwise first integer in the line
+                m_len = re.search(r"(\d+)\s*bp", line)
+                if not m_len:
+                    m_len = re.search(r"(\d+)", line)
+                length = m_len.group(1) if m_len else "0"
+                line = f"LOCUS       {locus:<16} {length} bp    DNA     linear   BCT 01-JAN-2000\n"
+            fixed_lines.append(line)
+
+    tmp = tempfile.NamedTemporaryFile(delete=False, mode="w")
+    tmp.writelines(fixed_lines)
+    tmp.close()
+    return tmp.name
+
 def parse_genbank(gb_file):
     """
-        Gets the following parts from the provided gbf or gbk file
+        Gets the following parts from the provided gff or gbk file
         - gene="thrA"
         - EC_number="2.7.1.39"
         - uni_idserence="similar to AA sequence:UniProtKB:P00561"
@@ -17,6 +43,8 @@ def parse_genbank(gb_file):
 
         Only the cds records that have UniProt id's are saved. Other areas can be empty but UniProtID will always be filled
     """
+    gb_file = sanitize_genbank(gb_file)
+
     cds_values = []
     total_cds = 0
 
@@ -67,7 +95,7 @@ def main():
     parser.add_argument(
         "--gb_file",
         required=True,
-        help="Input GenBank file (.gbk or .gbf)"
+        help="Input GenBank file (.gbk or .gff)"
     )
     parser.add_argument(
         "--parser_json",

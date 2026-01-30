@@ -37,10 +37,10 @@ process SPADES {
     //def reads = yml ? "--dataset $yml" : "$illumina_reads $pacbio_reads $nanopore_reads"
     """
     spades.py \\
-        $args \
-        --threads $task.cpus \
-        --memory $maxmem \
-        $reads \
+        $args \\
+        --threads $task.cpus \\
+        --memory $maxmem \\
+        $reads_args \\
         -o ./
 
     mv spades.log ${prefix}.spades.log
