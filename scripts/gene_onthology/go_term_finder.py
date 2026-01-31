@@ -2,7 +2,6 @@
 
 import sys
 import json
-import tqdm
 import argparse
 
 from datetime import datetime, timezone
@@ -26,21 +25,20 @@ def fetch_go_terms(uniprot_ids):
     go = QuickGO()
     go_data = {}
 
-    for uid in tqdm.tqdm(uniprot_ids, desc="Fetching GO Terms"):
-        # QuickGO expects a namespaced geneProductId like 'UniProtKB:P00561'
-        gp_id = uid if str(uid).startswith("UniProtKB:") else f"UniProtKB:{uid}"
+    for uid in uniprot_ids:
         try:
             response = go.Annotation(
-                geneProductId=gp_id,
-                includeFields="goName,goAspect"
+                geneProductId=uid,        
+                includeFields="goName"    
             )
+
             go_data[uid] = response.get("results", [])
+
         except Exception as e:
             sys.stderr.write(f"GO error for {uid}: {e}\n")
             go_data[uid] = []
 
     return go_data
-
 
 def write_json(data, output_path):
     """
@@ -85,7 +83,7 @@ def write_versions():
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Fetch GO terms for UniProt IDs from parsed GenBank JSON"
+        description="Fetch GO terms for UniProt IDs using QuickGO"
     )
     parser.add_argument("--input_json", required=True)
     parser.add_argument("--go_json", required=True)
@@ -96,10 +94,13 @@ def main():
         parsed_gbk = json.load(f)
 
     uniprot_ids = extract_uniprot_ids(parsed_gbk)
+
+    if not uniprot_ids:
+        sys.stderr.write("No UniProt IDs found in input JSON\n")
+
     go_data = fetch_go_terms(uniprot_ids)
 
     write_json(go_data, args.go_json)
-
     write_versions()
 
 

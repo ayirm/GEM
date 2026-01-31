@@ -17,8 +17,14 @@ process KEGG_REQUESTS {
 
     script:
     """
+    mkdir -p "${params.kegg_cache}"
+
     python3 ${python_script} \
         --mapping_json ${mapping_json} \
-        --out_json ${meta.id}_kegg.json
+        --out_json ${meta.id}_kegg.json \
+        --db ${params.kegg_cache}/${meta.id}_failsafe.db 
+
+    echo "PWD: \$PWD" >&2
+    echo "DB: ${params.kegg_cache}/${meta.id}_failsafe.db" >&2
     """
 }
